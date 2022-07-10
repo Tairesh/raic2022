@@ -35,6 +35,10 @@ impl Vec2 {
         let len = self.length();
         Self::new(self.x / len, self.y / len)
     }
+
+    pub fn dot(&self, other: &Self) -> f64 {
+        self.x * other.x + self.y * other.y
+    }
 }
 
 impl Add<Vec2> for Vec2 {
