@@ -22,4 +22,22 @@ impl Line {
         let vec = self.as_vec().normalize() * length;
         self.end = self.start + vec;
     }
+
+    pub fn distance_to_point(&self, point: &Vec2) -> f64 {
+        let vec = self.as_vec();
+        let vec_len = vec.length();
+        if vec_len == 0.0 {
+            return point.distance(&self.start);
+        }
+        let vec_norm = vec.normalize();
+        let vec_norm_dot_point = vec_norm.dot(&(*point - self.start));
+        if vec_norm_dot_point < 0.0 {
+            return point.distance(&self.start);
+        }
+        if vec_norm_dot_point > vec_len {
+            return point.distance(&self.end);
+        }
+        let point_on_line = self.start + vec_norm * vec_norm_dot_point;
+        point.distance(&point_on_line)
+    }
 }

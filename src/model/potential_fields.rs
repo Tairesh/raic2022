@@ -1,5 +1,5 @@
 use crate::debugging::Color;
-use crate::model::{Circle, Constants, Game, Item, Loot, Unit, Vec2};
+use crate::model::{Circle, Constants, Game, Item, Line, Loot, Projectile, Unit, Vec2};
 
 pub trait PotentialField {
     fn value(&self, point: Vec2) -> f64;
@@ -164,12 +164,53 @@ impl PotentialField for SoundsField {
     }
 }
 
+pub struct ProjectilesField {
+    projectiles: Vec<Projectile>,
+    unit_radius: f64,
+}
+
+impl ProjectilesField {
+    pub fn new(constants: &Constants) -> Self {
+        Self {
+            projectiles: vec![],
+            unit_radius: constants.unit_radius,
+        }
+    }
+
+    pub fn update(&mut self, game: &Game) {
+        self.projectiles = game
+            .projectiles
+            .iter()
+            .filter(|p| p.shooter_player_id != game.my_id)
+            .cloned()
+            .collect();
+    }
+}
+
+impl PotentialField for ProjectilesField {
+    fn value(&self, point: Vec2) -> f64 {
+        let mut value = 0.0;
+        for projectile in self.projectiles.iter() {
+            let moving = projectile.velocity * projectile.life_time + self.unit_radius;
+            let line = Line::new(projectile.position, projectile.position + moving);
+            if line.distance_to_point(&point) <= self.unit_radius {
+                return -1.0;
+            } else if line.distance_to_point(&point) < self.unit_radius * 2.0 {
+                value -= 0.5;
+            }
+        }
+
+        value
+    }
+}
+
 pub struct PotentialFields {
     pub zone: ZoneField,
     pub obstacles: ObstacleField,
     pub enemies: EnemyField,
     pub loot: LootField,
     pub sounds: SoundsField,
+    pub projectiles: ProjectilesField,
 }
 
 impl PotentialFields {
@@ -183,6 +224,7 @@ impl PotentialFields {
             enemies: EnemyField::empty(),
             loot: LootField::new(constants),
             sounds: SoundsField::new(),
+            projectiles: ProjectilesField::new(constants),
         }
     }
 
@@ -196,17 +238,19 @@ impl PotentialFields {
         self.enemies = EnemyField::new(game);
         self.loot.update(game);
         self.sounds.update(game);
+        self.projectiles.update(game);
     }
 
-    pub fn value(&self, point: Vec2, include_loot: bool) -> f64 {
+    pub fn value(&self, point: Vec2, battle_mode: bool) -> f64 {
         let mut value = self.zone.value(point);
         value += self.obstacles.value(point);
         value += self.enemies.value(point);
-        if include_loot {
+        if battle_mode {
             value += self.loot.value(point);
         }
         value += self.sounds.value(point);
-        value / if include_loot { 5.0 } else { 4.0 }
+        value += self.projectiles.value(point) * 5.0;
+        value / if battle_mode { 10.0 } else { 9.0 }
     }
 }
 

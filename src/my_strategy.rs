@@ -123,8 +123,8 @@ impl MyStrategy {
                                 //     }
                                 // }
                                 let enemy_circle = Circle::new(
-                                    closest_enemy.position + closest_enemy.velocity * 0.1,
-                                    self.constants.unit_radius,
+                                    closest_enemy.position + closest_enemy.velocity * 0.11,
+                                    self.constants.unit_radius * 1.1,
                                 );
                                 let obstacle_on_line = self
                                     .constants
@@ -132,10 +132,7 @@ impl MyStrategy {
                                     .iter()
                                     .filter(|o| !o.can_shoot_through)
                                     .any(|o| {
-                                        let circle = Circle::new(
-                                            o.position,
-                                            o.radius - self.constants.unit_radius,
-                                        );
+                                        let circle = Circle::new(o.position, o.radius + 0.1);
                                         circle.intercept_with_line(&aim)
                                     });
 
