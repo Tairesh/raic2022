@@ -13,4 +13,13 @@ impl Line {
     pub fn length(&self) -> f64 {
         self.start.distance(&self.end)
     }
+
+    pub fn as_vec(&self) -> Vec2 {
+        self.end - self.start
+    }
+
+    pub fn set_length(&mut self, length: f64) {
+        let vec = self.as_vec().normalize() * length;
+        self.end = self.start + vec;
+    }
 }

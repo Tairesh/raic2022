@@ -38,5 +38,7 @@ mod line;
 pub use self::line::*;
 mod circle;
 pub use self::circle::*;
+mod potential_fields;
+pub use self::potential_fields::*;
 mod zone;
 pub use self::zone::*;

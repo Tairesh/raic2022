@@ -41,11 +41,28 @@ impl Vec2 {
     }
 }
 
+impl PartialEq for Vec2 {
+    fn eq(&self, other: &Self) -> bool {
+        self.x.eq(&other.x) && self.y.eq(&other.y)
+    }
+}
+
+impl Eq for Vec2 {}
+
 impl Add<Vec2> for Vec2 {
     type Output = Vec2;
 
     fn add(self, rhs: Self) -> Self::Output {
         Self::new(self.x + rhs.x, self.y + rhs.y)
+    }
+}
+
+impl Add<f64> for Vec2 {
+    type Output = Vec2;
+
+    fn add(self, rhs: f64) -> Self::Output {
+        let new_length = self.length() + rhs;
+        self.normalize() * new_length
     }
 }
 
@@ -60,6 +77,12 @@ impl Sub<Vec2> for Vec2 {
 impl AddAssign<Vec2> for Vec2 {
     fn add_assign(&mut self, rhs: Self) {
         *self = Self::new(self.x + rhs.x, self.y + rhs.y);
+    }
+}
+
+impl AddAssign<f64> for Vec2 {
+    fn add_assign(&mut self, rhs: f64) {
+        *self = self.add(rhs);
     }
 }
 
