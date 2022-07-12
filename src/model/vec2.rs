@@ -39,6 +39,10 @@ impl Vec2 {
     pub fn dot(&self, other: &Self) -> f64 {
         self.x * other.x + self.y * other.y
     }
+
+    pub fn inverse(&self) -> Self {
+        Self::new(-self.x, -self.y)
+    }
 }
 
 impl PartialEq for Vec2 {

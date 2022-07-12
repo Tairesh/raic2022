@@ -1,22 +1,43 @@
 use crate::debugging::Color;
-use crate::model::{Circle, Constants, Game, Item, Line, Loot, Projectile, Unit, Vec2};
+use crate::model::{
+    Circle, Constants, Game, Item, Line, Loot, Projectile, Unit, Vec2, Vec2i, Zone,
+};
 
 pub trait PotentialField {
     fn value(&self, point: Vec2) -> f64;
 }
 
 pub struct ZoneField {
-    zone_center: Vec2,
-    square_zone_radius: f64,
+    zone: Zone,
+}
+
+impl ZoneField {
+    pub fn new(constants: &Constants) -> Self {
+        Self {
+            zone: Zone {
+                current_center: Vec2::zero(),
+                current_radius: constants.initial_zone_radius,
+                next_center: Vec2::zero(),
+                next_radius: constants.initial_zone_radius,
+            },
+        }
+    }
+
+    pub fn update(&mut self, game: &Game) {
+        self.zone = game.zone.clone();
+    }
 }
 
 impl PotentialField for ZoneField {
     fn value(&self, point: Vec2) -> f64 {
-        let distance = point.square_distance(&self.zone_center);
-        if distance < self.square_zone_radius {
-            1.0
+        if point.distance(&self.zone.current_center) >= self.zone.current_radius - 2.0 {
+            return -1.0;
+        }
+        let distance = point.distance(&self.zone.next_center);
+        if distance < self.zone.next_radius {
+            distance / self.zone.next_radius
         } else {
-            -(distance - self.square_zone_radius) / self.square_zone_radius
+            -(distance - self.zone.next_radius) / self.zone.next_radius
         }
     }
 }
@@ -45,7 +66,7 @@ impl PotentialField for ObstacleField {
             }
         }
 
-        0.0
+        1.0
     }
 }
 
@@ -74,17 +95,22 @@ impl PotentialField for EnemyField {
     fn value(&self, point: Vec2) -> f64 {
         let mut value: f64 = 0.0;
         for e in self.enemies.iter() {
+            let aim = Line::new(e.position, e.position + e.direction.normalize() * 100.0);
+            let d = aim.distance_to_point(&point);
             if e.weapon.is_none() || e.ammo[e.weapon.unwrap() as usize] == 0 {
-                value += 0.1;
-            } else if e.position.square_distance(&point) < 300.0 {
+                value += 1.0;
+            } else if d < 1.0 {
                 value += -1.0;
-            } else if e.position.square_distance(&point) < 700.0 {
+            } else if d < 2.0 {
                 value += -0.75;
-            } else if e.position.square_distance(&point) < 1000.0 {
+            } else if d < 3.0 {
                 value += -0.5;
-            } else if e.position.square_distance(&point) < 1500.0 {
+            } else if d < 4.0 {
                 value += -0.25;
             }
+
+            let d = e.position.square_distance(&point);
+            value += d / 40_000.0;
         }
         value.clamp(-1.0, 1.0)
     }
@@ -216,10 +242,7 @@ pub struct PotentialFields {
 impl PotentialFields {
     pub fn new(constants: &Constants) -> Self {
         Self {
-            zone: ZoneField {
-                zone_center: Vec2::new(0.0, 0.0),
-                square_zone_radius: 300.0 * 300.0,
-            },
+            zone: ZoneField::new(constants),
             obstacles: ObstacleField::new(constants),
             enemies: EnemyField::empty(),
             loot: LootField::new(constants),
@@ -229,19 +252,15 @@ impl PotentialFields {
     }
 
     pub fn calculate(&mut self, game: &Game, _constants: &Constants) {
-        if game.zone.next_center != self.zone.zone_center {
-            self.zone = ZoneField {
-                zone_center: game.zone.next_center,
-                square_zone_radius: game.zone.next_radius * game.zone.next_radius,
-            };
-        }
+        self.zone.update(game);
         self.enemies = EnemyField::new(game);
         self.loot.update(game);
         self.sounds.update(game);
         self.projectiles.update(game);
     }
 
-    pub fn value(&self, point: Vec2, battle_mode: bool) -> f64 {
+    pub fn value(&self, point: Vec2i, battle_mode: bool) -> f64 {
+        let point = point.into();
         let mut value = self.zone.value(point);
         value += self.obstacles.value(point);
         value += self.enemies.value(point);

@@ -40,5 +40,7 @@ mod circle;
 pub use self::circle::*;
 mod potential_fields;
 pub use self::potential_fields::*;
+mod vec2i;
+pub use self::vec2i::*;
 mod zone;
 pub use self::zone::*;

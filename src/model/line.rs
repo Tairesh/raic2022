@@ -24,12 +24,11 @@ impl Line {
     }
 
     pub fn distance_to_point(&self, point: &Vec2) -> f64 {
-        let vec = self.as_vec();
-        let vec_len = vec.length();
+        let vec_len = self.length();
         if vec_len == 0.0 {
             return point.distance(&self.start);
         }
-        let vec_norm = vec.normalize();
+        let vec_norm = self.as_vec().normalize();
         let vec_norm_dot_point = vec_norm.dot(&(*point - self.start));
         if vec_norm_dot_point < 0.0 {
             return point.distance(&self.start);
