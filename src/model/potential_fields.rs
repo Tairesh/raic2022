@@ -30,15 +30,19 @@ impl ZoneField {
 
 impl PotentialField for ZoneField {
     fn value(&self, point: Vec2) -> f64 {
-        if point.distance(&self.zone.current_center) >= self.zone.current_radius - 2.0 {
-            return -1.0;
+        let mut value = 0.0;
+        let current_distance = point.distance(&self.zone.current_center);
+        if current_distance >= self.zone.current_radius - 2.0 {
+            value += 1.0 - current_distance / self.zone.current_radius;
         }
         let distance = point.distance(&self.zone.next_center);
         if distance < self.zone.next_radius {
-            distance / self.zone.next_radius
+            value -= distance / self.zone.next_radius;
         } else {
-            -(distance - self.zone.next_radius) / self.zone.next_radius
+            value -= (distance - self.zone.next_radius) / (self.zone.next_radius * 2.0);
         }
+
+        value
     }
 }
 
@@ -110,7 +114,7 @@ impl PotentialField for EnemyField {
             }
 
             let d = e.position.square_distance(&point);
-            value += d / 40_000.0;
+            value += d / 10_000.0;
         }
         value.clamp(-1.0, 1.0)
     }
@@ -118,6 +122,8 @@ impl PotentialField for EnemyField {
 
 pub struct LootField {
     loot: Vec<Loot>,
+    constants: Constants,
+    me: Unit,
     unit_radius: f64,
 }
 
@@ -126,6 +132,25 @@ impl LootField {
         Self {
             loot: vec![],
             unit_radius: constants.unit_radius,
+            me: Unit {
+                position: Vec2::zero(),
+                remaining_spawn_time: None,
+                velocity: Vec2::zero(),
+                direction: Vec2::zero(),
+                aim: 0.0,
+                action: None,
+                health_regeneration_start_tick: 0,
+                weapon: None,
+                next_shot_tick: 0,
+                ammo: vec![0; constants.weapons.len()],
+                player_id: 0,
+                health: 0.0,
+                shield: 0.0,
+                id: 0,
+                extra_lives: 0,
+                shield_potions: 0,
+            },
+            constants: constants.clone(),
         }
     }
 
@@ -136,14 +161,57 @@ impl LootField {
             .filter(|l| !matches!(l.item, Item::Weapon { type_index: 0 }))
             .cloned()
             .collect();
+        self.me = game
+            .units
+            .iter()
+            .find(|u| u.player_id == game.my_id)
+            .unwrap()
+            .clone();
     }
 }
 
 impl PotentialField for LootField {
     fn value(&self, point: Vec2) -> f64 {
         let mut value = -1.0;
-        for loot in self.loot.iter() {
+        for loot in self.loot.iter().filter(|l| {
+            let t = &l.item;
+            match t {
+                Item::Weapon { type_index } => {
+                    if *type_index == 0 {
+                        return false;
+                    }
+                    if let Some(weapon_id) = self.me.weapon {
+                        if *type_index == weapon_id || self.me.ammo[*type_index as usize] < 10 {
+                            return false;
+                        }
+                        let my_weapon = &self.constants.weapons[weapon_id as usize];
+                        let new_weapon = &self.constants.weapons[*type_index as usize];
+                        if my_weapon.projectile_life_time * my_weapon.projectile_speed
+                            > new_weapon.projectile_life_time * new_weapon.projectile_speed
+                        {
+                            return false;
+                        }
+                    }
+                }
+                Item::Ammo {
+                    weapon_type_index, ..
+                } => {
+                    if self.me.ammo[*weapon_type_index as usize]
+                        == self.constants.weapons[*weapon_type_index as usize].max_inventory_ammo
+                    {
+                        return false;
+                    }
+                }
+                Item::ShieldPotions { .. } => {
+                    if self.me.shield_potions == self.constants.max_shield_potions_in_inventory {
+                        return false;
+                    }
+                }
+            }
+            true
+        }) {
             // TODO: check loot type
+
             if loot.position.square_distance(&point) < self.unit_radius * 2.0 {
                 value += 2.0
             } else if loot.position.square_distance(&point) < self.unit_radius * 4.0 {
@@ -177,11 +245,11 @@ impl PotentialField for SoundsField {
     fn value(&self, point: Vec2) -> f64 {
         let mut value = 0.0;
         for b in self.sounds.iter() {
-            if b.square_distance(&point) < 100.0 {
+            if b.square_distance(&point) < 500.0 {
                 value -= 1.0
-            } else if b.square_distance(&point) < 500.0 {
+            } else if b.square_distance(&point) < 2500.0 {
                 value -= 0.5
-            } else if b.square_distance(&point) < 1000.0 {
+            } else if b.square_distance(&point) < 5000.0 {
                 value -= 0.25
             }
         }
@@ -219,10 +287,17 @@ impl PotentialField for ProjectilesField {
         for projectile in self.projectiles.iter() {
             let moving = projectile.velocity * projectile.life_time + self.unit_radius;
             let line = Line::new(projectile.position, projectile.position + moving);
-            if line.distance_to_point(&point) <= self.unit_radius {
+            let d = line.distance_to_point(&point);
+            if d < 1.0 {
                 return -1.0;
-            } else if line.distance_to_point(&point) < self.unit_radius * 2.0 {
+            } else if d < 2.0 {
+                value -= 0.75;
+            } else if d < 3.0 {
                 value -= 0.5;
+            } else if d < 4.0 {
+                value -= 0.25;
+            } else if d < 5.0 {
+                value -= 0.1;
             }
         }
 
@@ -259,16 +334,19 @@ impl PotentialFields {
         self.projectiles.update(game);
     }
 
-    pub fn value(&self, point: Vec2i, battle_mode: bool) -> f64 {
+    pub fn value(&self, point: Vec2i, battle_mode: bool, outside: bool) -> f64 {
         let point = point.into();
         let mut value = self.zone.value(point);
         value += self.obstacles.value(point);
+        value += self.projectiles.value(point) * 5.0;
         value += self.enemies.value(point);
+        if outside {
+            return value;
+        }
+        value += self.sounds.value(point);
         if battle_mode {
             value += self.loot.value(point);
         }
-        value += self.sounds.value(point);
-        value += self.projectiles.value(point) * 5.0;
         value / if battle_mode { 10.0 } else { 9.0 }
     }
 }

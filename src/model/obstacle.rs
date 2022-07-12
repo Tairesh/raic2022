@@ -15,6 +15,12 @@ pub struct Obstacle {
     pub can_shoot_through: bool,
 }
 
+impl Obstacle {
+    pub fn as_circle(&self, add_radius: f64) -> Circle {
+        Circle::new(self.position, self.radius + add_radius)
+    }
+}
+
 impl trans::Trans for Obstacle {
     fn write_to(&self, writer: &mut dyn std::io::Write) -> std::io::Result<()> {
         self.id.write_to(writer)?;

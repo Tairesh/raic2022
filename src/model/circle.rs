@@ -15,7 +15,7 @@ impl Circle {
     }
 
     pub fn contains_point(&self, point: &Vec2) -> bool {
-        self.center.distance(point) < self.radius
+        self.center.distance(point) <= self.radius
     }
 
     pub fn intercept_with_line(&self, line: &Line) -> bool {

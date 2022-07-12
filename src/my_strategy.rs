@@ -1,4 +1,5 @@
 use crate::debug_interface::DebugInterface;
+use ai_cup_22::debugging::Color;
 use std::collections::HashMap;
 // use ai_cup_22::debugging::Color;
 use ai_cup_22::model::*;
@@ -19,7 +20,7 @@ impl MyStrategy {
         game: &Game,
         _debug_interface: Option<&mut DebugInterface>,
     ) -> Order {
-        let debug_interface = _debug_interface.unwrap();
+        // let debug_interface = _debug_interface.unwrap();
         self.pp.calculate(game, &self.constants);
         let enemies: Vec<&Unit> = game
             .units
@@ -33,6 +34,8 @@ impl MyStrategy {
             .filter(|u| u.player_id == game.my_id)
             .next()
             .unwrap();
+        let im_outside = me.position.distance(&game.zone.current_center)
+            >= game.zone.current_radius - self.constants.unit_radius * 3.0;
 
         let closest_enemy = if me.weapon.is_none() || me.ammo[me.weapon.unwrap() as usize] == 0 {
             None // TODO:
@@ -53,15 +56,35 @@ impl MyStrategy {
             (me.position.x + me.velocity.x / self.constants.ticks_per_second).round() as i32,
             (me.position.y + me.velocity.y / self.constants.ticks_per_second).round() as i32,
         );
-        let k: i32 = if closest_enemy.is_none() { 10 } else { 1 };
+        let k: i32 = if closest_enemy.is_none() && !im_outside {
+            10
+        } else {
+            1
+        };
         let mut map = HashMap::with_capacity(((k * 2 + 1) * (k * 2 + 1)) as usize);
         for i in x - k..=x + k {
             for j in y - k..=y + k {
                 let point = Vec2i::new(i, j);
+                let inside_obstacle = self.constants.obstacles.iter().any(|o| {
+                    o.as_circle(self.constants.unit_radius)
+                        .contains_point(&point.into())
+                });
+                if inside_obstacle {
+                    continue;
+                }
+                let line = Line::new(me.position, point.into());
+                let line_intersect_obstacle = self.constants.obstacles.iter().any(|o| {
+                    o.as_circle(self.constants.unit_radius)
+                        .intercept_with_line(&line)
+                });
+                if line_intersect_obstacle {
+                    continue;
+                }
+
                 let value = *map
                     .entry(point)
-                    .or_insert_with(|| self.pp.value(point, closest_enemy.is_none()));
-                debug_interface.add_circle(point.into(), 0.3, color_by_value(value));
+                    .or_insert_with(|| self.pp.value(point, closest_enemy.is_none(), im_outside));
+                // debug_interface.add_circle(point.into(), 0.3, color_by_value(value));
                 if value > max_pp_value
                     || (value == max_pp_value
                         && max_pp_value_pos.square_distance(&me.position)
@@ -72,6 +95,7 @@ impl MyStrategy {
                 }
             }
         }
+        // debug_interface.add_circle(max_pp_value_pos, 0.3, Color::new(0.0, 1.0, 1.0, 0.5));
 
         Order {
             unit_orders: game
