@@ -43,6 +43,10 @@ impl Vec2 {
     pub fn inverse(&self) -> Self {
         Self::new(-self.x, -self.y)
     }
+
+    pub fn angle(&self) -> f64 {
+        self.y.atan2(self.x)
+    }
 }
 
 impl PartialEq for Vec2 {

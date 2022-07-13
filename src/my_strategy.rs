@@ -1,6 +1,4 @@
 use crate::debug_interface::DebugInterface;
-use ai_cup_22::debugging::Color;
-use std::collections::HashMap;
 // use ai_cup_22::debugging::Color;
 use ai_cup_22::model::*;
 
@@ -34,8 +32,6 @@ impl MyStrategy {
             .filter(|u| u.player_id == game.my_id)
             .next()
             .unwrap();
-        let im_outside = me.position.distance(&game.zone.current_center)
-            >= game.zone.current_radius - self.constants.unit_radius * 3.0;
 
         let closest_enemy = if me.weapon.is_none() || me.ammo[me.weapon.unwrap() as usize] == 0 {
             None // TODO:
@@ -50,20 +46,18 @@ impl MyStrategy {
                 })
         };
 
-        let mut max_pp_value = -1.0;
+        let mut max_pp_value = -1000.0;
         let mut max_pp_value_pos = Vec2::new(0.0, 0.0);
         let (x, y) = (
-            (me.position.x + me.velocity.x / self.constants.ticks_per_second).round() as i32,
-            (me.position.y + me.velocity.y / self.constants.ticks_per_second).round() as i32,
+            (me.position.x + 2.0 * me.velocity.x / self.constants.ticks_per_second).round() as i32,
+            (me.position.y + 2.0 * me.velocity.y / self.constants.ticks_per_second).round() as i32,
         );
-        let k: i32 = if closest_enemy.is_none() && !im_outside {
-            10
-        } else {
-            1
-        };
-        let mut map = HashMap::with_capacity(((k * 2 + 1) * (k * 2 + 1)) as usize);
+        let k: i32 = if closest_enemy.is_none() { 10 } else { 1 };
         for i in x - k..=x + k {
             for j in y - k..=y + k {
+                if i == x && j == y {
+                    continue;
+                }
                 let point = Vec2i::new(i, j);
                 let inside_obstacle = self.constants.obstacles.iter().any(|o| {
                     o.as_circle(self.constants.unit_radius)
@@ -81,12 +75,13 @@ impl MyStrategy {
                     continue;
                 }
 
-                let value = *map
-                    .entry(point)
-                    .or_insert_with(|| self.pp.value(point, closest_enemy.is_none(), im_outside));
+                let value = self.pp.value(
+                    point,
+                    closest_enemy.is_some() || !game.projectiles.is_empty(),
+                );
                 // debug_interface.add_circle(point.into(), 0.3, color_by_value(value));
                 if value > max_pp_value
-                    || (value == max_pp_value
+                    || (max_pp_value - value < 0.05
                         && max_pp_value_pos.square_distance(&me.position)
                             > me.position.square_distance(&point.into()))
                 {
@@ -95,7 +90,37 @@ impl MyStrategy {
                 }
             }
         }
-        // debug_interface.add_circle(max_pp_value_pos, 0.3, Color::new(0.0, 1.0, 1.0, 0.5));
+        // for i in x - 20..=x + 20 {
+        //     for j in y - 20..=y + 20 {
+        //         let point = Vec2i::new(i, j);
+        //         let value = self.pp.zone.value(point.into());
+        //         if i == x - 20 || j == y - 20 || i == x + 20 || j == y + 20 {
+        //             debug_interface.add_placed_text(
+        //                 point.into(),
+        //                 format!("{:.2}", value),
+        //                 Vec2::zero(),
+        //                 1.0,
+        //                 Color::new(0.0, 0.0, 0.0, 1.0),
+        //             );
+        //         }
+        //         debug_interface.add_circle(point.into(), 0.3, color_by_value(value));
+        //     }
+        // }
+        // debug_interface.add_circle(max_pp_value_pos, 0.3, Color::new(0.0, 0.0, 0.0, 0.8));
+
+        // for sound in game.sounds.iter() {
+        //     debug_interface.add_circle(sound.position, 1.0, Color::new(0.0, 1.0, 0.0, 0.8));
+        // }
+        //
+        // for projectile in game.projectiles.iter() {
+        //     let moving = projectile.velocity * projectile.life_time + self.constants.unit_radius;
+        //     let line = Line::new(projectile.position, projectile.position + moving);
+        //     debug_interface.add_poly_line(
+        //         vec![line.start, line.end],
+        //         0.3,
+        //         Color::new(1.0, 0.0, 0.0, 0.5),
+        //     );
+        // }
 
         Order {
             unit_orders: game
@@ -110,9 +135,14 @@ impl MyStrategy {
                             .unwrap()
                             .position
                             .square_distance(&me.position)
-                            < 10_000.0
+                            < 8_000.0
                     {
-                        closest_enemy.unwrap().position + closest_enemy.unwrap().velocity * 0.1
+                        let distance = closest_enemy.unwrap().position.distance(&me.position)
+                            - self.constants.unit_radius;
+                        let seconds_to_enemy = distance
+                            / self.constants.weapons[me.weapon.unwrap() as usize].projectile_speed;
+                        closest_enemy.unwrap().position
+                            + closest_enemy.unwrap().velocity * seconds_to_enemy * 0.77
                             - me.position
                     } else {
                         if let Some(sound) = game
@@ -158,6 +188,11 @@ impl MyStrategy {
                                 if aim.length() > d + self.constants.unit_radius * 2.0 {
                                     aim.set_length(d + self.constants.unit_radius * 2.0)
                                 }
+
+                                let seconds_to_enemy = (d - self.constants.unit_radius)
+                                    / self.constants.weapons[me.weapon.unwrap() as usize]
+                                        .projectile_speed;
+
                                 // debug_interface.add_poly_line(
                                 //     vec![aim.start, aim.end],
                                 //     0.1,
@@ -174,8 +209,9 @@ impl MyStrategy {
                                 //     }
                                 // }
                                 let enemy_circle = Circle::new(
-                                    closest_enemy.position + closest_enemy.velocity * 0.11,
-                                    self.constants.unit_radius * 1.1,
+                                    closest_enemy.position
+                                        + closest_enemy.velocity * seconds_to_enemy * 0.77,
+                                    self.constants.unit_radius,
                                 );
                                 let obstacle_on_line = self
                                     .constants

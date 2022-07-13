@@ -1,7 +1,8 @@
 use crate::debugging::Color;
 use crate::model::{
-    Circle, Constants, Game, Item, Line, Loot, Projectile, Unit, Vec2, Vec2i, Zone,
+    Circle, Constants, Game, Item, Line, Loot, Projectile, SoundProperties, Unit, Vec2, Vec2i, Zone,
 };
+use std::collections::VecDeque;
 
 pub trait PotentialField {
     fn value(&self, point: Vec2) -> f64;
@@ -9,6 +10,8 @@ pub trait PotentialField {
 
 pub struct ZoneField {
     zone: Zone,
+    // unit_radius: f64,
+    // my_position: Vec2,
 }
 
 impl ZoneField {
@@ -20,29 +23,27 @@ impl ZoneField {
                 next_center: Vec2::zero(),
                 next_radius: constants.initial_zone_radius,
             },
+            // unit_radius: constants.unit_radius,
+            // my_position: Vec2::zero(),
         }
     }
 
     pub fn update(&mut self, game: &Game) {
         self.zone = game.zone.clone();
+        // let me = game.units.iter().find(|u| u.id == game.my_id).unwrap();
+        // self.my_position = me.position.clone();
     }
 }
 
 impl PotentialField for ZoneField {
     fn value(&self, point: Vec2) -> f64 {
-        let mut value = 0.0;
-        let current_distance = point.distance(&self.zone.current_center);
-        if current_distance >= self.zone.current_radius - 2.0 {
-            value += 1.0 - current_distance / self.zone.current_radius;
-        }
-        let distance = point.distance(&self.zone.next_center);
-        if distance < self.zone.next_radius {
-            value -= distance / self.zone.next_radius;
+        let distance = point.distance(&self.zone.current_center);
+        let k = if distance > self.zone.next_radius {
+            10.0
         } else {
-            value -= (distance - self.zone.next_radius) / (self.zone.next_radius * 2.0);
-        }
-
-        value
+            1.0
+        };
+        k * -distance / self.zone.current_radius
     }
 }
 
@@ -70,7 +71,7 @@ impl PotentialField for ObstacleField {
             }
         }
 
-        1.0
+        0.0
     }
 }
 
@@ -99,7 +100,7 @@ impl PotentialField for EnemyField {
     fn value(&self, point: Vec2) -> f64 {
         let mut value: f64 = 0.0;
         for e in self.enemies.iter() {
-            let aim = Line::new(e.position, e.position + e.direction.normalize() * 100.0);
+            let aim = Line::new(e.position, e.position + e.direction.normalize() * 50.0);
             let d = aim.distance_to_point(&point);
             if e.weapon.is_none() || e.ammo[e.weapon.unwrap() as usize] == 0 {
                 value += 1.0;
@@ -114,9 +115,12 @@ impl PotentialField for EnemyField {
             }
 
             let d = e.position.square_distance(&point);
-            value += d / 10_000.0;
+            if d > 2_500.0 {
+                continue;
+            }
+            value += d / 2_500.0;
         }
-        value.clamp(-1.0, 1.0)
+        value.clamp(-1.0, 0.0)
     }
 }
 
@@ -155,12 +159,14 @@ impl LootField {
     }
 
     pub fn update(&mut self, game: &Game) {
+        // TODO: remember loot
         self.loot = game
             .loot
             .iter()
             .filter(|l| !matches!(l.item, Item::Weapon { type_index: 0 }))
             .cloned()
             .collect();
+        // TODO: multiunit support
         self.me = game
             .units
             .iter()
@@ -172,7 +178,7 @@ impl LootField {
 
 impl PotentialField for LootField {
     fn value(&self, point: Vec2) -> f64 {
-        let mut value = -1.0;
+        let mut value = 0.0;
         for loot in self.loot.iter().filter(|l| {
             let t = &l.item;
             match t {
@@ -213,13 +219,13 @@ impl PotentialField for LootField {
             // TODO: check loot type
 
             if loot.position.square_distance(&point) < self.unit_radius * 2.0 {
-                value += 2.0
-            } else if loot.position.square_distance(&point) < self.unit_radius * 4.0 {
-                value += 1.5
-            } else if loot.position.square_distance(&point) < self.unit_radius * 6.0 {
                 value += 1.0
-            } else if loot.position.square_distance(&point) < self.unit_radius * 8.0 {
+            } else if loot.position.square_distance(&point) < self.unit_radius * 4.0 {
+                value += 0.75
+            } else if loot.position.square_distance(&point) < self.unit_radius * 6.0 {
                 value += 0.5
+            } else if loot.position.square_distance(&point) < self.unit_radius * 8.0 {
+                value += 0.25
             }
         }
 
@@ -227,33 +233,76 @@ impl PotentialField for LootField {
     }
 }
 
-pub struct SoundsField {
-    sounds: Vec<Vec2>,
+pub struct ShootingSoundsField {
+    sounds: Vec<(i32, Vec2, Vec2)>,
+    current_tick: i32,
+    sound_properties: Vec<SoundProperties>,
+    my_coordinates: Vec2,
+    unit_radius: f64,
 }
 
-impl SoundsField {
-    pub fn new() -> Self {
-        Self { sounds: vec![] }
+impl ShootingSoundsField {
+    pub fn new(constants: &Constants) -> Self {
+        Self {
+            sounds: vec![],
+            current_tick: 0,
+            sound_properties: constants.sounds.clone(),
+            my_coordinates: Vec2::zero(),
+            unit_radius: constants.unit_radius,
+        }
     }
 
     pub fn update(&mut self, game: &Game) {
-        self.sounds = game.sounds.iter().map(|s| s.position).collect();
+        let me = game
+            .units
+            .iter()
+            .find(|u| u.player_id == game.my_id)
+            .unwrap();
+        self.my_coordinates = me.position;
+        self.sounds.extend(
+            game.sounds
+                .iter()
+                .filter(|s| {
+                    if game
+                        .units
+                        .iter()
+                        .filter(|u| u.player_id != game.my_id)
+                        .any(|u| {
+                            let distance = u.position.distance(&s.position);
+                            distance < self.unit_radius * 2.0
+                        })
+                    {
+                        return false;
+                    }
+
+                    let name = &self.sound_properties[s.type_index as usize].name;
+                    match name.as_str() {
+                        "Wand" | "Staff" | "Bow" => true,
+                        _ => false,
+                    }
+                })
+                .map(|s| (game.current_tick, s.position, me.position.clone())),
+        );
+        self.sounds
+            .retain(|&(tick, ..)| game.current_tick - tick < 50);
+        self.current_tick = game.current_tick;
     }
 }
 
-impl PotentialField for SoundsField {
+impl PotentialField for ShootingSoundsField {
     fn value(&self, point: Vec2) -> f64 {
         let mut value = 0.0;
-        for b in self.sounds.iter() {
-            if b.square_distance(&point) < 500.0 {
-                value -= 1.0
-            } else if b.square_distance(&point) < 2500.0 {
-                value -= 0.5
-            } else if b.square_distance(&point) < 5000.0 {
-                value -= 0.25
-            }
-        }
+        for (tick, place, my_pos) in self.sounds.iter() {
+            let tick_k = 1.0 - (self.current_tick - tick) as f64 / 50.0;
 
+            let line = Line::new(*place, *my_pos);
+            let distance = line.distance_to_point(&point);
+            if distance > self.unit_radius * 2.0 {
+                continue;
+            }
+
+            value -= (1.0 - distance / (self.unit_radius * 2.0)) * tick_k;
+        }
         value
     }
 }
@@ -261,6 +310,8 @@ impl PotentialField for SoundsField {
 pub struct ProjectilesField {
     projectiles: Vec<Projectile>,
     unit_radius: f64,
+    // damage: Vec<f64>,
+    // obstacles: Vec<Obstacle>,
 }
 
 impl ProjectilesField {
@@ -268,14 +319,30 @@ impl ProjectilesField {
         Self {
             projectiles: vec![],
             unit_radius: constants.unit_radius,
+            // obstacles: constants.obstacles.clone(),
+            // damage: constants
+            //     .weapons
+            //     .iter()
+            //     .map(|w| w.projectile_damage)
+            //     .collect(),
         }
     }
 
     pub fn update(&mut self, game: &Game) {
+        let me = game
+            .units
+            .iter()
+            .find(|u| u.player_id == game.my_id)
+            .unwrap();
         self.projectiles = game
             .projectiles
             .iter()
-            .filter(|p| p.shooter_player_id != game.my_id)
+            .filter(|projectile| {
+                let moving = projectile.velocity * projectile.life_time + self.unit_radius;
+                let line = Line::new(projectile.position, projectile.position + moving);
+                let distance = line.distance_to_point(&me.position);
+                projectile.shooter_player_id != game.my_id && distance < self.unit_radius * 2.0
+            })
             .cloned()
             .collect();
     }
@@ -287,20 +354,53 @@ impl PotentialField for ProjectilesField {
         for projectile in self.projectiles.iter() {
             let moving = projectile.velocity * projectile.life_time + self.unit_radius;
             let line = Line::new(projectile.position, projectile.position + moving);
-            let d = line.distance_to_point(&point);
-            if d < 1.0 {
-                return -1.0;
-            } else if d < 2.0 {
-                value -= 0.75;
-            } else if d < 3.0 {
-                value -= 0.5;
-            } else if d < 4.0 {
-                value -= 0.25;
-            } else if d < 5.0 {
-                value -= 0.1;
+
+            let distance = line.distance_to_point(&point);
+            if distance > 5.0 {
+                continue;
             }
+
+            value -= 1.0 - distance / 5.0;
         }
 
+        value
+    }
+}
+
+pub struct DontStayField {
+    last_positions: VecDeque<Vec2>,
+}
+
+impl DontStayField {
+    pub fn new() -> Self {
+        Self {
+            last_positions: VecDeque::with_capacity(10),
+        }
+    }
+
+    pub fn update(&mut self, game: &Game) {
+        let me = game
+            .units
+            .iter()
+            .find(|u| u.player_id == game.my_id)
+            .unwrap();
+        if self.last_positions.len() == 10 {
+            self.last_positions.pop_front();
+        }
+        self.last_positions.push_back(me.position);
+    }
+}
+
+impl PotentialField for DontStayField {
+    fn value(&self, point: Vec2) -> f64 {
+        let mut value = 0.0;
+        for position in self.last_positions.iter() {
+            let distance = position.distance(&point);
+            if distance > 10.0 {
+                continue;
+            }
+            value -= (1.0 - distance / 10.0) / 10.0;
+        }
         value
     }
 }
@@ -310,8 +410,9 @@ pub struct PotentialFields {
     pub obstacles: ObstacleField,
     pub enemies: EnemyField,
     pub loot: LootField,
-    pub sounds: SoundsField,
+    pub sounds: ShootingSoundsField,
     pub projectiles: ProjectilesField,
+    pub dont_stay: DontStayField,
 }
 
 impl PotentialFields {
@@ -321,8 +422,9 @@ impl PotentialFields {
             obstacles: ObstacleField::new(constants),
             enemies: EnemyField::empty(),
             loot: LootField::new(constants),
-            sounds: SoundsField::new(),
+            sounds: ShootingSoundsField::new(constants),
             projectiles: ProjectilesField::new(constants),
+            dont_stay: DontStayField::new(),
         }
     }
 
@@ -332,22 +434,21 @@ impl PotentialFields {
         self.loot.update(game);
         self.sounds.update(game);
         self.projectiles.update(game);
+        self.dont_stay.update(game);
     }
 
-    pub fn value(&self, point: Vec2i, battle_mode: bool, outside: bool) -> f64 {
+    pub fn value(&self, point: Vec2i, battle_mode: bool) -> f64 {
         let point = point.into();
         let mut value = self.zone.value(point);
         value += self.obstacles.value(point);
         value += self.projectiles.value(point) * 5.0;
         value += self.enemies.value(point);
-        if outside {
-            return value;
-        }
         value += self.sounds.value(point);
-        if battle_mode {
+        if !battle_mode {
             value += self.loot.value(point);
+            value += self.dont_stay.value(point);
         }
-        value / if battle_mode { 10.0 } else { 9.0 }
+        value / if battle_mode { 11.0 } else { 9.0 }
     }
 }
 
