@@ -14,7 +14,7 @@ impl Circle {
         self.center.distance(&other.center) <= self.radius + other.radius
     }
 
-    pub fn contains_point(&self, point: &Vec2) -> bool {
+    pub fn contains(&self, point: &Vec2) -> bool {
         self.center.distance(point) <= self.radius
     }
 
@@ -26,6 +26,6 @@ impl Circle {
             return false;
         }
         let p = line.start + a * c;
-        self.contains_point(&p)
+        self.contains(&p)
     }
 }

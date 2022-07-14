@@ -13,6 +13,17 @@ pub struct Zone {
     pub next_radius: f64,
 }
 
+impl Default for Zone {
+    fn default() -> Self {
+        Self {
+            current_center: Vec2::zero(),
+            current_radius: 0.0,
+            next_center: Vec2::zero(),
+            next_radius: 0.0,
+        }
+    }
+}
+
 impl trans::Trans for Zone {
     fn write_to(&self, writer: &mut dyn std::io::Write) -> std::io::Result<()> {
         self.current_center.write_to(writer)?;

@@ -1,17 +1,18 @@
 use crate::debug_interface::DebugInterface;
-// use ai_cup_22::debugging::Color;
 use ai_cup_22::model::*;
+use ai_cup_22::potential_field::PotentialField;
+use std::f64::consts::PI;
 
 pub struct MyStrategy {
     constants: Constants,
-    pp: PotentialFields,
+    pp2: PotentialField,
 }
 
 impl MyStrategy {
     pub fn new(constants: Constants) -> Self {
         // dbg!(&constants);
-        let pp = PotentialFields::new(&constants);
-        Self { constants, pp }
+        let pp = PotentialField::new(&constants);
+        Self { constants, pp2: pp }
     }
     pub fn get_order(
         &mut self,
@@ -19,102 +20,14 @@ impl MyStrategy {
         _debug_interface: Option<&mut DebugInterface>,
     ) -> Order {
         // let debug_interface = _debug_interface.unwrap();
-        self.pp.calculate(game, &self.constants);
-        let enemies: Vec<&Unit> = game
-            .units
-            .iter()
-            .filter(|u| u.player_id != game.my_id)
-            .collect();
-
-        let me = game
-            .units
-            .iter()
-            .filter(|u| u.player_id == game.my_id)
-            .next()
-            .unwrap();
-
-        let closest_enemy = if me.weapon.is_none() || me.ammo[me.weapon.unwrap() as usize] == 0 {
-            None // TODO:
-        } else {
-            enemies
-                .iter()
-                // .filter(|e| e.position.square_distance(&me.position) < 1000.0)
-                .min_by(|a, b| {
-                    let a_dist = me.position.square_distance(&a.position);
-                    let b_dist = me.position.square_distance(&b.position);
-                    a_dist.partial_cmp(&b_dist).unwrap()
-                })
-        };
-
-        let mut max_pp_value = -1000.0;
-        let mut max_pp_value_pos = Vec2::new(0.0, 0.0);
-        let (x, y) = (
-            (me.position.x + 2.0 * me.velocity.x / self.constants.ticks_per_second).round() as i32,
-            (me.position.y + 2.0 * me.velocity.y / self.constants.ticks_per_second).round() as i32,
-        );
-        let k: i32 = if closest_enemy.is_none() { 10 } else { 1 };
-        for i in x - k..=x + k {
-            for j in y - k..=y + k {
-                if i == x && j == y {
-                    continue;
-                }
-                let point = Vec2i::new(i, j);
-                let inside_obstacle = self.constants.obstacles.iter().any(|o| {
-                    o.as_circle(self.constants.unit_radius)
-                        .contains_point(&point.into())
-                });
-                if inside_obstacle {
-                    continue;
-                }
-                let line = Line::new(me.position, point.into());
-                let line_intersect_obstacle = self.constants.obstacles.iter().any(|o| {
-                    o.as_circle(self.constants.unit_radius)
-                        .intercept_with_line(&line)
-                });
-                if line_intersect_obstacle {
-                    continue;
-                }
-
-                let value = self.pp.value(
-                    point,
-                    closest_enemy.is_some() || !game.projectiles.is_empty(),
-                );
-                // debug_interface.add_circle(point.into(), 0.3, color_by_value(value));
-                if value > max_pp_value
-                    || (max_pp_value - value < 0.05
-                        && max_pp_value_pos.square_distance(&me.position)
-                            > me.position.square_distance(&point.into()))
-                {
-                    max_pp_value = value;
-                    max_pp_value_pos = point.into();
-                }
-            }
-        }
-        // for i in x - 20..=x + 20 {
-        //     for j in y - 20..=y + 20 {
-        //         let point = Vec2i::new(i, j);
-        //         let value = self.pp.zone.value(point.into());
-        //         if i == x - 20 || j == y - 20 || i == x + 20 || j == y + 20 {
-        //             debug_interface.add_placed_text(
-        //                 point.into(),
-        //                 format!("{:.2}", value),
-        //                 Vec2::zero(),
-        //                 1.0,
-        //                 Color::new(0.0, 0.0, 0.0, 1.0),
-        //             );
-        //         }
-        //         debug_interface.add_circle(point.into(), 0.3, color_by_value(value));
-        //     }
-        // }
-        // debug_interface.add_circle(max_pp_value_pos, 0.3, Color::new(0.0, 0.0, 0.0, 0.8));
+        self.pp2.update(game);
 
         // for sound in game.sounds.iter() {
         //     debug_interface.add_circle(sound.position, 1.0, Color::new(0.0, 1.0, 0.0, 0.8));
         // }
         //
         // for projectile in game.projectiles.iter() {
-        //     let moving = projectile.velocity * projectile.life_time + self.constants.unit_radius;
-        //     let line = Line::new(projectile.position, projectile.position + moving);
+        //     let line = projectile.as_line();
         //     debug_interface.add_poly_line(
         //         vec![line.start, line.end],
         //         0.3,
@@ -128,14 +41,101 @@ impl MyStrategy {
                 .iter()
                 .filter(|u| u.player_id == game.my_id)
                 .map(|me| {
-                    let target_velocity = (max_pp_value_pos - me.position).normalize()
-                        * self.constants.max_unit_forward_speed;
+                    // for point in self.pp2.points_around(me.id).iter() {
+                    //     let value = self.pp2.value(point);
+                    //     debug_interface.add_circle(*point, 0.5, color_by_value(value));
+                    //     debug_interface.add_placed_text(
+                    //         *point,
+                    //         format!("{:.2}", value),
+                    //         Vec2::new(0.5, 0.5),
+                    //         0.2,
+                    //         Color::BLACK,
+                    //     );
+                    // }
+
+                    let target_velocity = if self.pp2.is_in_danger(me) {
+                        (*self
+                            .pp2
+                            .points_around(me.id)
+                            .iter()
+                            .max_by(|a, b| {
+                                let a_value = self.pp2.value(a);
+                                let b_value = self.pp2.value(b);
+                                a_value.partial_cmp(&b_value).unwrap()
+                            })
+                            .unwrap()
+                            - me.position)
+                            .normalize()
+                            * self.constants.max_unit_forward_speed
+                    } else {
+                        // TODO: запоминать бонусы
+                        let bonus = game
+                            .loot
+                            .iter()
+                            .filter(|l| {
+                                l.is_useful_to_me(me, &self.constants)
+                                    && l.position.distance(&game.zone.current_center)
+                                        < game.zone.current_radius
+                                            - self.constants.unit_radius * 2.0
+                            })
+                            .min_by(|l, r| {
+                                l.position
+                                    .square_distance(&me.position)
+                                    .partial_cmp(&r.position.square_distance(&me.position))
+                                    .unwrap()
+                            });
+
+                        let target_position = if let Some(bonus) = bonus {
+                            bonus.position
+                        } else {
+                            me.position + me.direction.rotate(PI / 10.0) * 5.0
+                        };
+
+                        (target_position - me.position).normalize()
+                            * self.constants.max_unit_forward_speed
+                    };
+
+                    // TODO: запоминать врагов
+                    let closest_enemy =
+                        if me.weapon.is_some() && me.ammo[me.weapon.unwrap() as usize] > 0 {
+                            game.units
+                                .iter()
+                                .filter(|u| u.player_id != game.my_id)
+                                .filter(|u| {
+                                    let line = Line::new(me.position, u.position);
+                                    !self
+                                        .constants
+                                        .obstacles
+                                        .iter()
+                                        .filter(|o| !o.can_shoot_through)
+                                        .any(|o| {
+                                            let circle = o.as_circle(-self.constants.unit_radius);
+                                            circle.intercept_with_line(&line)
+                                        })
+                                })
+                                .min_by(|a, b| {
+                                    let a_value = a.position.square_distance(&me.position);
+                                    let b_value = b.position.square_distance(&me.position);
+                                    a_value.partial_cmp(&b_value).unwrap()
+                                })
+                        } else {
+                            None
+                        };
+
+                    let my_weapon_range = me
+                        .weapon
+                        .map(|w| {
+                            let prop = &self.constants.weapons[w as usize];
+                            prop.projectile_speed * prop.projectile_life_time
+                        })
+                        .unwrap_or(0.0);
+
                     let target_direction = if closest_enemy.is_some()
                         && closest_enemy
                             .unwrap()
                             .position
                             .square_distance(&me.position)
-                            < 8_000.0
+                            <= my_weapon_range.powi(2) * 1.5
                     {
                         let distance = closest_enemy.unwrap().position.distance(&me.position)
                             - self.constants.unit_radius;
@@ -145,22 +145,18 @@ impl MyStrategy {
                             + closest_enemy.unwrap().velocity * seconds_to_enemy * 0.77
                             - me.position
                     } else {
-                        if let Some(sound) = game
-                            .sounds
-                            .iter()
-                            .filter(|s| s.position.square_distance(&me.position) < 1000.0)
-                            .min_by(|a, b| {
-                                let a_dist = me.position.square_distance(&a.position);
-                                let b_dist = me.position.square_distance(&b.position);
-                                a_dist.partial_cmp(&b_dist).unwrap()
-                            })
-                        {
+                        if let Some(sound) = self.pp2.sounds().iter().min_by(|a, b| {
+                            let a_dist = me.position.square_distance(&a.position);
+                            let b_dist = me.position.square_distance(&b.position);
+                            a_dist.partial_cmp(&b_dist).unwrap()
+                        }) {
                             sound.position - me.position
                         } else {
                             target_velocity
                         }
                     }
                     .normalize();
+
                     (
                         me.id,
                         UnitOrder {
@@ -171,18 +167,17 @@ impl MyStrategy {
                                     .unwrap()
                                     .position
                                     .square_distance(&me.position)
-                                    < 10_000.0
+                                    < 8_000.0
                             {
                                 let closest_enemy = closest_enemy.unwrap();
                                 let weapon_id = me.weapon.unwrap() as usize;
                                 let weapon = &self.constants.weapons[weapon_id];
+                                let weapon_range = weapon.projectile_life_time
+                                    * weapon.projectile_speed
+                                    + self.constants.unit_radius * 2.0;
                                 let mut aim = Line::new(
                                     me.position,
-                                    me.position
-                                        + (me.direction.normalize()
-                                            * weapon.projectile_life_time
-                                            * weapon.projectile_speed
-                                            + self.constants.unit_radius * 2.0),
+                                    me.position + (me.direction.normalize() * weapon_range),
                                 );
                                 let d = closest_enemy.position.distance(&me.position);
                                 if aim.length() > d + self.constants.unit_radius * 2.0 {
@@ -211,79 +206,23 @@ impl MyStrategy {
                                 let enemy_circle = Circle::new(
                                     closest_enemy.position
                                         + closest_enemy.velocity * seconds_to_enemy * 0.77,
-                                    self.constants.unit_radius,
+                                    self.constants.unit_radius * 0.9,
                                 );
                                 let obstacle_on_line = self
                                     .constants
                                     .obstacles
                                     .iter()
                                     .filter(|o| !o.can_shoot_through)
-                                    .any(|o| {
-                                        let circle = Circle::new(o.position, o.radius + 0.1);
-                                        circle.intercept_with_line(&aim)
-                                    });
+                                    .any(|o| o.as_circle(0.0).intercept_with_line(&aim));
 
-                                let my_weapon_range = self.constants.weapons[weapon_id]
-                                    .projectile_speed
-                                    * self.constants.weapons[me.weapon.unwrap() as usize]
-                                        .projectile_life_time
-                                    + self.constants.unit_radius * 2.0;
-
-                                if obstacle_on_line {
+                                if obstacle_on_line && d > weapon_range {
                                     if let Some(loot) = game
                                         .loot
                                         .iter()
                                         .filter(|l| {
-                                            let t = &l.item;
-                                            match t {
-                                                Item::Weapon { type_index } => {
-                                                    if *type_index == 0 {
-                                                        return false;
-                                                    }
-                                                    if let Some(weapon_id) = me.weapon {
-                                                        if *type_index == weapon_id
-                                                            || me.ammo[*type_index as usize] < 10
-                                                        {
-                                                            return false;
-                                                        }
-                                                        let my_weapon = &self.constants.weapons
-                                                            [weapon_id as usize];
-                                                        let new_weapon = &self.constants.weapons
-                                                            [*type_index as usize];
-                                                        if my_weapon.projectile_life_time
-                                                            * my_weapon.projectile_speed
-                                                            > new_weapon.projectile_life_time
-                                                                * new_weapon.projectile_speed
-                                                        {
-                                                            return false;
-                                                        }
-                                                    } else {
-                                                        return true;
-                                                    }
-                                                }
-                                                Item::Ammo {
-                                                    weapon_type_index, ..
-                                                } => {
-                                                    if me.ammo[*weapon_type_index as usize]
-                                                        == self.constants.weapons
-                                                            [*weapon_type_index as usize]
-                                                            .max_inventory_ammo
-                                                    {
-                                                        return false;
-                                                    }
-                                                }
-                                                Item::ShieldPotions { .. } => {
-                                                    if me.shield_potions
-                                                        == self
-                                                            .constants
-                                                            .max_shield_potions_in_inventory
-                                                    {
-                                                        return false;
-                                                    }
-                                                }
-                                            }
                                             l.position.distance(&me.position)
-                                                < self.constants.unit_radius
+                                                <= self.constants.unit_radius
+                                                && l.is_useful_to_me(me, &self.constants)
                                         })
                                         .next()
                                     {
@@ -299,60 +238,15 @@ impl MyStrategy {
                                     Some(ActionOrder::Aim {
                                         shoot: !obstacle_on_line
                                             && enemy_circle.intercept_with_line(&aim)
-                                            && d <= my_weapon_range,
+                                            && d <= weapon_range,
                                     })
                                 }
                             } else if let Some(loot) = game
                                 .loot
                                 .iter()
                                 .filter(|l| {
-                                    let t = &l.item;
-                                    match t {
-                                        Item::Weapon { type_index } => {
-                                            if *type_index == 0 {
-                                                return false;
-                                            }
-                                            if let Some(weapon_id) = me.weapon {
-                                                if *type_index == weapon_id
-                                                    || me.ammo[*type_index as usize] < 10
-                                                {
-                                                    return false;
-                                                }
-                                                let my_weapon =
-                                                    &self.constants.weapons[weapon_id as usize];
-                                                let new_weapon =
-                                                    &self.constants.weapons[*type_index as usize];
-                                                if my_weapon.projectile_life_time
-                                                    * my_weapon.projectile_speed
-                                                    > new_weapon.projectile_life_time
-                                                        * new_weapon.projectile_speed
-                                                {
-                                                    return false;
-                                                }
-                                            } else {
-                                                return true;
-                                            }
-                                        }
-                                        Item::Ammo {
-                                            weapon_type_index, ..
-                                        } => {
-                                            if me.ammo[*weapon_type_index as usize]
-                                                == self.constants.weapons
-                                                    [*weapon_type_index as usize]
-                                                    .max_inventory_ammo
-                                            {
-                                                return false;
-                                            }
-                                        }
-                                        Item::ShieldPotions { .. } => {
-                                            if me.shield_potions
-                                                == self.constants.max_shield_potions_in_inventory
-                                            {
-                                                return false;
-                                            }
-                                        }
-                                    }
-                                    l.position.distance(&me.position) < self.constants.unit_radius
+                                    l.position.distance(&me.position) <= self.constants.unit_radius
+                                        && l.is_useful_to_me(me, &self.constants)
                                 })
                                 .next()
                             {

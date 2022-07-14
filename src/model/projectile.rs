@@ -19,6 +19,33 @@ pub struct Projectile {
     pub life_time: f64,
 }
 
+impl Projectile {
+    pub fn moving_vec(&self) -> Vec2 {
+        self.velocity * self.life_time
+    }
+
+    pub fn as_line(&self) -> Line {
+        Line::new(self.position, self.position + self.moving_vec())
+    }
+
+    pub fn is_dangerous(&self, game: &Game, constants: &Constants) -> bool {
+        if self.shooter_player_id == game.my_id && !constants.friendly_fire {
+            // Это моя пуля и френдли фаер выключен
+            return false;
+        }
+        let line = self.as_line();
+        for me in game.units.iter().filter(|u| u.player_id == game.my_id) {
+            let distance = line.distance_to_point(&me.position);
+            if distance < constants.unit_radius * 2.0 {
+                // TODO: проверить что перед этим она не попадёт в обстакл или другого юнита
+                // пролетит близко к моему юниту
+                return true;
+            }
+        }
+        false
+    }
+}
+
 impl trans::Trans for Projectile {
     fn write_to(&self, writer: &mut dyn std::io::Write) -> std::io::Result<()> {
         self.id.write_to(writer)?;

@@ -1,5 +1,5 @@
 use super::*;
-use std::ops::{Add, AddAssign, Mul, Sub, SubAssign};
+use std::ops::{Add, AddAssign, Div, Mul, Sub, SubAssign};
 
 /// 2 dimensional vector.
 #[derive(Copy, Clone, Debug)]
@@ -46,6 +46,12 @@ impl Vec2 {
 
     pub fn angle(&self) -> f64 {
         self.y.atan2(self.x)
+    }
+
+    pub fn rotate(&self, angle: f64) -> Self {
+        let cos = angle.cos();
+        let sin = angle.sin();
+        Self::new(self.x * cos - self.y * sin, self.x * sin + self.y * cos)
     }
 }
 
@@ -105,6 +111,14 @@ impl Mul<f64> for Vec2 {
 
     fn mul(self, rhs: f64) -> Self::Output {
         Self::new(self.x * rhs, self.y * rhs)
+    }
+}
+
+impl Div<f64> for Vec2 {
+    type Output = Vec2;
+
+    fn div(self, rhs: f64) -> Self::Output {
+        Self::new(self.x / rhs, self.y / rhs)
     }
 }
 

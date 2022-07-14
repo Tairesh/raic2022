@@ -1,5 +1,9 @@
 use super::*;
 
+pub static WAND: i32 = 0;
+pub static STAFF: i32 = 1;
+pub static BOW: i32 = 2;
+
 /// Loot lying on the ground
 #[derive(Clone, Debug)]
 pub struct Loot {
@@ -9,6 +13,52 @@ pub struct Loot {
     pub position: model::Vec2,
     /// Item
     pub item: model::Item,
+}
+
+impl Loot {
+    pub fn is_useful_to_me(&self, me: &Unit, constants: &Constants) -> bool {
+        let item = &self.item;
+        match item {
+            &Item::Weapon { type_index } => {
+                if me.weapon.is_none() {
+                    return true;
+                }
+
+                let my_weapon = me.weapon.unwrap();
+                if type_index != BOW {
+                    return me.ammo[my_weapon as usize] == 0;
+                }
+
+                if my_weapon == BOW {
+                    return false;
+                }
+
+                me.ammo[BOW as usize] > 0
+            }
+            &Item::Ammo {
+                weapon_type_index, ..
+            } => {
+                if me.ammo[weapon_type_index as usize]
+                    == constants.weapons[weapon_type_index as usize].max_inventory_ammo
+                {
+                    return false;
+                }
+
+                if let Some(my_weapon) = me.weapon {
+                    if my_weapon == BOW {
+                        weapon_type_index == BOW
+                    } else {
+                        weapon_type_index != STAFF
+                    }
+                } else {
+                    true
+                }
+            }
+            Item::ShieldPotions { .. } => {
+                me.shield_potions != constants.max_shield_potions_in_inventory
+            }
+        }
+    }
 }
 
 impl trans::Trans for Loot {
