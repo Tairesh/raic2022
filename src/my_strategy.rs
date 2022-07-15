@@ -167,7 +167,7 @@ impl MyStrategy {
                                     .unwrap()
                                     .position
                                     .square_distance(&me.position)
-                                    < 8_000.0
+                                    < my_weapon_range.powi(2) * 1.5
                             {
                                 let closest_enemy = closest_enemy.unwrap();
                                 let weapon_id = me.weapon.unwrap() as usize;

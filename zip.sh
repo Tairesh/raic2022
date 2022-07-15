@@ -1,4 +1,3 @@
 #!/bin/sh
 
-# Add src folder and Cargo.toml to the zip file
-zip -r solution.zip src Cargo.toml
+zip -r "solution_$(date +"%Y-%m-%d_%H-%M-%S").zip" src Cargo.toml

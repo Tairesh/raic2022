@@ -4,6 +4,8 @@ pub static WAND: i32 = 0;
 pub static STAFF: i32 = 1;
 pub static BOW: i32 = 2;
 
+static PREFERRED_WEAPON: i32 = BOW;
+
 /// Loot lying on the ground
 #[derive(Clone, Debug)]
 pub struct Loot {
@@ -25,15 +27,15 @@ impl Loot {
                 }
 
                 let my_weapon = me.weapon.unwrap();
-                if type_index != BOW {
-                    return me.ammo[my_weapon as usize] == 0;
+                if type_index != PREFERRED_WEAPON {
+                    return me.ammo[my_weapon as usize] == 0 && me.ammo[type_index as usize] > 0;
                 }
 
-                if my_weapon == BOW {
+                if my_weapon == PREFERRED_WEAPON {
                     return false;
                 }
 
-                me.ammo[BOW as usize] > 0
+                me.ammo[my_weapon as usize] > 0
             }
             &Item::Ammo {
                 weapon_type_index, ..
@@ -45,8 +47,8 @@ impl Loot {
                 }
 
                 if let Some(my_weapon) = me.weapon {
-                    if my_weapon == BOW {
-                        weapon_type_index == BOW
+                    if my_weapon == PREFERRED_WEAPON {
+                        weapon_type_index == PREFERRED_WEAPON
                     } else {
                         weapon_type_index != STAFF
                     }

@@ -20,6 +20,10 @@ pub struct Projectile {
 }
 
 impl Projectile {
+    pub fn range(&self) -> f64 {
+        self.moving_vec().length()
+    }
+
     pub fn moving_vec(&self) -> Vec2 {
         self.velocity * self.life_time
     }

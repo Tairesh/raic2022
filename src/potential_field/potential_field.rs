@@ -77,6 +77,17 @@ impl PotentialField {
                         _ => false,
                     }
                 })
+                .filter(|sound| {
+                    !game
+                        .units
+                        .iter()
+                        .filter(|unit| unit.player_id != game.my_id)
+                        .any(|unit| {
+                            let distance = unit.position.distance(&sound.position);
+                            let props = &self.constants.sounds[sound.type_index as usize];
+                            distance <= self.constants.unit_radius + props.offset
+                        })
+                })
                 .map(|sound| {
                     let unit = game
                         .units
@@ -98,6 +109,17 @@ impl PotentialField {
                         _ => false,
                     }
                 })
+                .filter(|sound| {
+                    !game
+                        .units
+                        .iter()
+                        .filter(|unit| unit.player_id != game.my_id)
+                        .any(|unit| {
+                            let distance = unit.position.distance(&sound.position);
+                            let props = &self.constants.sounds[sound.type_index as usize];
+                            distance <= self.constants.unit_radius + props.offset
+                        })
+                })
                 .map(|sound| (sound.clone(), game.current_tick)),
         );
         self.hit_sounds
@@ -111,6 +133,17 @@ impl PotentialField {
                         "Steps" => true,
                         _ => false,
                     }
+                })
+                .filter(|sound| {
+                    !game
+                        .units
+                        .iter()
+                        .filter(|unit| unit.player_id != game.my_id)
+                        .any(|unit| {
+                            let distance = unit.position.distance(&sound.position);
+                            let props = &self.constants.sounds[sound.type_index as usize];
+                            distance <= self.constants.unit_radius + props.offset
+                        })
                 })
                 .map(|sound| (sound.clone(), game.current_tick)),
         );
@@ -154,11 +187,17 @@ impl PotentialField {
             let line = projectile.as_line();
 
             let distance = line.distance_to_point(&position);
-            if distance > 5.0 {
+            let distance_limit = self.constants.unit_radius * 5.0;
+
+            if distance > distance_limit {
                 continue;
             }
 
-            value -= 1.0 - distance / 5.0;
+            value -= 1.0 - distance / distance_limit;
+            let distance = projectile.position.distance(position);
+            let range = projectile.range();
+
+            value += 0.05 * distance / range;
         }
         value
     }
@@ -190,7 +229,7 @@ impl PotentialField {
 
             let line = Line::new(sound.position, *my_pos);
             let distance = line.distance_to_point(&position);
-            let distance_limit = self.constants.unit_radius * 2.0;
+            let distance_limit = self.constants.unit_radius * 4.0;
             if distance > distance_limit {
                 continue;
             }
@@ -258,7 +297,7 @@ impl PotentialField {
             );
 
             let distance = aim.distance_to_point(&position);
-            let distance_limit = self.constants.unit_radius * 3.0;
+            let distance_limit = range;
             if distance > distance_limit {
                 continue;
             }
