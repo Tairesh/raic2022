@@ -278,6 +278,10 @@ impl PotentialField {
             .iter()
             .filter(|u| u.player_id != self.my_id)
         {
+            if enemy.aim == 0.0 {
+                continue;
+            }
+
             if enemy.weapon.is_none() {
                 continue;
             }
