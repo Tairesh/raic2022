@@ -11,11 +11,11 @@ impl Circle {
     }
 
     pub fn intersects_with(&self, other: &Self) -> bool {
-        self.center.distance(&other.center) <= self.radius + other.radius
+        self.center.distance_to(&other.center) <= self.radius + other.radius
     }
 
     pub fn contains(&self, point: &Vec2) -> bool {
-        self.center.distance(point) <= self.radius
+        self.center.distance_to(point) <= self.radius
     }
 
     pub fn intercept_with_line(&self, line: &Line) -> bool {

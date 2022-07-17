@@ -32,21 +32,16 @@ impl Projectile {
         Line::new(self.position, self.position + self.moving_vec())
     }
 
-    pub fn is_dangerous(&self, game: &Game, constants: &Constants) -> bool {
-        if self.shooter_player_id == game.my_id && !constants.friendly_fire {
+    pub fn is_dangerous(&self, me: &Unit, constants: &Constants) -> bool {
+        if self.shooter_player_id == me.player_id && !constants.friendly_fire {
             // Это моя пуля и френдли фаер выключен
             return false;
         }
         let line = self.as_line();
-        for me in game.units.iter().filter(|u| u.player_id == game.my_id) {
-            let distance = line.distance_to_point(&me.position);
-            if distance < constants.unit_radius * 2.0 {
-                // TODO: проверить что перед этим она не попадёт в обстакл или другого юнита
-                // пролетит близко к моему юниту
-                return true;
-            }
-        }
-        false
+        let distance = line.distance_to_point(&me.position);
+        // TODO: проверить что перед этим она не попадёт в обстакл (не в юнита потому что он может отойти
+        // пролетит близко к моему юниту
+        distance < constants.unit_radius * 3.0
     }
 }
 

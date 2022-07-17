@@ -51,16 +51,27 @@ impl PotentialField {
         self.old_projectiles
             .retain(|p| p.life_time >= 0.0 && !seeing_projectiles_ids.contains(&p.id));
 
+        // TODO: should be dangerous for a unit not for any unit
         self.dangerous_projectiles = game
             .projectiles
             .iter()
-            .filter(|projectile| projectile.is_dangerous(game, &self.constants))
+            .filter(|projectile| {
+                game.units
+                    .iter()
+                    .filter(|u| u.player_id == game.my_id)
+                    .any(|me| projectile.is_dangerous(me, &self.constants))
+            })
             .cloned()
             .collect();
         self.dangerous_projectiles.extend(
             self.old_projectiles
                 .iter()
-                .filter(|projectile| projectile.is_dangerous(game, &self.constants))
+                .filter(|projectile| {
+                    game.units
+                        .iter()
+                        .filter(|u| u.player_id == game.my_id)
+                        .any(|me| projectile.is_dangerous(me, &self.constants))
+                })
                 .cloned(),
         );
 
@@ -83,7 +94,7 @@ impl PotentialField {
                         .iter()
                         .filter(|unit| unit.player_id != game.my_id)
                         .any(|unit| {
-                            let distance = unit.position.distance(&sound.position);
+                            let distance = unit.position.distance_to(&sound.position);
                             let props = &self.constants.sounds[sound.type_index as usize];
                             distance <= self.constants.unit_radius + props.offset
                         })
@@ -115,7 +126,7 @@ impl PotentialField {
                         .iter()
                         .filter(|unit| unit.player_id != game.my_id)
                         .any(|unit| {
-                            let distance = unit.position.distance(&sound.position);
+                            let distance = unit.position.distance_to(&sound.position);
                             let props = &self.constants.sounds[sound.type_index as usize];
                             distance <= self.constants.unit_radius + props.offset
                         })
@@ -140,7 +151,7 @@ impl PotentialField {
                         .iter()
                         .filter(|unit| unit.player_id != game.my_id)
                         .any(|unit| {
-                            let distance = unit.position.distance(&sound.position);
+                            let distance = unit.position.distance_to(&sound.position);
                             let props = &self.constants.sounds[sound.type_index as usize];
                             distance <= self.constants.unit_radius + props.offset
                         })
@@ -175,7 +186,7 @@ impl PotentialField {
                         .seeing_units
                         .iter()
                         .filter(|u| u.id != unit_id)
-                        .any(|u| u.position.distance(p) < self.constants.unit_radius * 2.0)
+                        .any(|u| u.position.distance_to(p) < self.constants.unit_radius * 2.0)
                         .not()
             })
             .collect()
@@ -194,7 +205,7 @@ impl PotentialField {
             }
 
             value -= 1.0 - distance / distance_limit;
-            let distance = projectile.position.distance(position);
+            let distance = projectile.position.distance_to(position);
             let range = projectile.range();
 
             value += 0.05 * distance / range;
@@ -203,7 +214,7 @@ impl PotentialField {
     }
 
     fn value_zone(&self, position: &Vec2) -> f64 {
-        let distance = self.zone.next_center.distance(position);
+        let distance = self.zone.next_center.distance_to(position);
         let wanna_radius = (self.zone.next_radius - self.constants.unit_radius * 4.0)
             .max(self.constants.unit_radius * 2.0);
         if distance < wanna_radius {
@@ -214,7 +225,7 @@ impl PotentialField {
     }
 
     fn value_outside(&self, position: &Vec2) -> f64 {
-        let distance = self.zone.current_center.distance(position);
+        let distance = self.zone.current_center.distance_to(position);
         if self.zone.current_radius - distance < self.constants.unit_radius * 2.0 {
             return -distance / self.zone.current_radius;
         }
@@ -243,7 +254,7 @@ impl PotentialField {
         let mut value = 0.0;
         for (sound, tick) in self.hit_sounds.iter() {
             let tick_k = 1.0 - (self.current_tick - tick) as f64 / 50.0;
-            let distance = sound.position.distance(position);
+            let distance = sound.position.distance_to(position);
             let distance_limit = self.constants.unit_radius * 5.0;
             if distance > distance_limit {
                 continue;
@@ -258,7 +269,7 @@ impl PotentialField {
         let mut value = 0.0;
         for (sound, tick) in self.steps_sounds.iter() {
             let tick_k = 1.0 - (self.current_tick - tick) as f64 / 50.0;
-            let distance = sound.position.distance(position);
+            let distance = sound.position.distance_to(position);
             let distance_limit = self.constants.unit_radius * 5.0;
             if distance > distance_limit {
                 continue;
@@ -278,6 +289,12 @@ impl PotentialField {
             .iter()
             .filter(|u| u.player_id != self.my_id)
         {
+            let distance = enemy.position.distance_to(position);
+            let distance_limit = self.constants.unit_radius * 5.0;
+            if distance < distance_limit {
+                value -= (1.0 - distance / distance_limit) * 0.5;
+            }
+
             if enemy.aim == 0.0 {
                 continue;
             }
@@ -294,6 +311,10 @@ impl PotentialField {
 
             let prop = &self.constants.weapons[weapon];
             let range = prop.projectile_life_time * prop.projectile_speed;
+
+            if distance > range * 1.5 {
+                value -= (distance - range * 1.5) / 300.0;
+            }
 
             let aim = Line::new(
                 enemy.position,
@@ -312,12 +333,44 @@ impl PotentialField {
         value
     }
 
-    pub fn is_in_danger(&self, me: &Unit) -> bool {
-        !self.dangerous_projectiles.is_empty()
+    pub fn im_inside_obstacle(&self, me: &Unit) -> bool {
+        self.constants.obstacles.iter().any(|o| {
+            o.as_circle(self.constants.unit_radius)
+                .contains(&me.position)
+        })
+    }
+
+    pub fn im_outside(&self, me: &Unit) -> bool {
+        me.position.distance_to(&self.zone.current_center)
+            >= (self.zone.current_radius - self.constants.unit_radius * 4.0)
+    }
+
+    pub fn is_in_very_danger(&self, me: &Unit) -> bool {
+        self.im_inside_obstacle(me)
+            || self.im_outside(me)
+            || !self.dangerous_projectiles.is_empty()
             || !self.shooting_sounds.is_empty()
-            || !self.hit_sounds.is_empty()
-            || !self.steps_sounds.is_empty()
-            || me.position.distance(&self.zone.current_center)
+            || !self
+                .hit_sounds
+                .iter()
+                .find(|(s, _)| {
+                    s.position.distance_to(&me.position) < self.constants.unit_radius * 2.0
+                })
+                .is_some()
+    }
+
+    pub fn is_in_danger(&self, me: &Unit) -> bool {
+        self.dangerous_projectiles
+            .iter()
+            .any(|p| p.is_dangerous(me, &self.constants))
+            || self.shooting_sounds.iter().any(|(s, _, _)| {
+                let range = s.get_weapon_shooting_range(&self.constants);
+                s.position.distance_to(&me.position) < range * 1.5
+            })
+            || self.hit_sounds.iter().any(|(s, _)| {
+                s.position.distance_to(&me.position) < self.constants.unit_radius * 4.0
+            })
+            || me.position.distance_to(&self.zone.current_center)
                 >= (self.zone.current_radius - self.constants.unit_radius * 4.0)
     }
 

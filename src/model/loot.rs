@@ -18,7 +18,36 @@ pub struct Loot {
 }
 
 impl Loot {
+    pub fn is_weapon(&self) -> bool {
+        if let Item::Weapon { .. } = self.item {
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn is_ammo_for(&self, weapon_idx: i32) -> bool {
+        if let Item::Ammo {
+            weapon_type_index, ..
+        } = self.item
+        {
+            weapon_type_index == weapon_idx
+        } else {
+            false
+        }
+    }
+
+    pub fn is_first_take_loot(&self) -> bool {
+        match self.item {
+            Item::ShieldPotions { .. } => true,
+            _ => false,
+        }
+    }
+
     pub fn is_useful_to_me(&self, me: &Unit, constants: &Constants) -> bool {
+        if me.action.is_some() {
+            return false;
+        }
         let item = &self.item;
         match item {
             &Item::Weapon { type_index } => {
@@ -35,7 +64,7 @@ impl Loot {
                     return false;
                 }
 
-                me.ammo[my_weapon as usize] > 0
+                me.ammo[type_index as usize] > 0
             }
             &Item::Ammo {
                 weapon_type_index, ..
@@ -47,11 +76,7 @@ impl Loot {
                 }
 
                 if let Some(my_weapon) = me.weapon {
-                    if my_weapon == PREFERRED_WEAPON {
-                        weapon_type_index == PREFERRED_WEAPON
-                    } else {
-                        weapon_type_index != STAFF
-                    }
+                    weapon_type_index == PREFERRED_WEAPON || weapon_type_index == my_weapon
                 } else {
                     true
                 }

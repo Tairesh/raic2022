@@ -15,12 +15,12 @@ impl Vec2 {
         Self { x, y }
     }
 
-    pub fn square_distance(&self, other: &Self) -> f64 {
+    pub fn square_distance_to(&self, other: &Self) -> f64 {
         (self.x - other.x).powi(2) + (self.y - other.y).powi(2)
     }
 
-    pub fn distance(&self, other: &Self) -> f64 {
-        self.square_distance(other).sqrt()
+    pub fn distance_to(&self, other: &Self) -> f64 {
+        self.square_distance_to(other).sqrt()
     }
 
     pub fn zero() -> Self {
@@ -28,11 +28,14 @@ impl Vec2 {
     }
 
     pub fn length(&self) -> f64 {
-        self.distance(&Self::zero())
+        self.distance_to(&Self::zero())
     }
 
     pub fn normalize(&self) -> Self {
         let len = self.length();
+        if len == 0.0 {
+            return Self::zero();
+        }
         Self::new(self.x / len, self.y / len)
     }
 

@@ -37,6 +37,12 @@ pub struct Unit {
     pub shield_potions: i32,
 }
 
+impl Unit {
+    pub fn as_circle(&self, unit_radius: f64) -> Circle {
+        Circle::new(self.position, unit_radius)
+    }
+}
+
 impl trans::Trans for Unit {
     fn write_to(&self, writer: &mut dyn std::io::Write) -> std::io::Result<()> {
         self.id.write_to(writer)?;

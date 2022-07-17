@@ -1,18 +1,19 @@
 use crate::debug_interface::DebugInterface;
+// use ai_cup_22::debugging::Color;
 use ai_cup_22::model::*;
 use ai_cup_22::potential_field::PotentialField;
 use std::f64::consts::PI;
 
 pub struct MyStrategy {
     constants: Constants,
-    pp2: PotentialField,
+    pp: PotentialField,
 }
 
 impl MyStrategy {
     pub fn new(constants: Constants) -> Self {
         // dbg!(&constants);
         let pp = PotentialField::new(&constants);
-        Self { constants, pp2: pp }
+        Self { constants, pp }
     }
     pub fn get_order(
         &mut self,
@@ -20,7 +21,24 @@ impl MyStrategy {
         _debug_interface: Option<&mut DebugInterface>,
     ) -> Order {
         // let debug_interface = _debug_interface.unwrap();
-        self.pp2.update(game);
+        self.pp.update(game);
+
+        let spawned_unit = game
+            .units
+            .iter()
+            .find(|u| u.player_id == game.my_id && u.remaining_spawn_time.is_none());
+
+        let obstacles: Vec<&Obstacle> = self
+            .constants
+            .obstacles
+            .iter()
+            .filter(|o| !o.can_shoot_through)
+            .collect();
+        let enemies: Vec<&Unit> = game
+            .units
+            .iter()
+            .filter(|u| u.player_id != game.my_id)
+            .collect();
 
         // for sound in game.sounds.iter() {
         //     debug_interface.add_circle(sound.position, 1.0, Color::new(0.0, 1.0, 0.0, 0.8));
@@ -43,7 +61,7 @@ impl MyStrategy {
                 .map(|me| {
                     // for point in self.pp2.points_around(me.id).iter() {
                     //     let value = self.pp2.value(point);
-                    //     debug_interface.add_circle(*point, 0.5, color_by_value(value));
+                    //     // debug_interface.add_circle(*point, 0.5, color_by_value(value));
                     //     debug_interface.add_placed_text(
                     //         *point,
                     //         format!("{:.2}", value),
@@ -52,18 +70,198 @@ impl MyStrategy {
                     //         Color::BLACK,
                     //     );
                     // }
+                    let i_have_weapon =
+                        me.weapon.is_some() && me.ammo[me.weapon.unwrap() as usize] > 0;
 
-                    let target_velocity = if self.pp2.is_in_danger(me) {
+                    let my_weapon_range = me
+                        .weapon
+                        .map(|w| {
+                            let prop = &self.constants.weapons[w as usize];
+                            prop.projectile_speed * prop.projectile_life_time
+                        })
+                        .unwrap_or(0.0);
+
+                    // TODO: запоминать врагов
+                    let closest_enemy = if i_have_weapon {
+                        let can_shoot_right_now = enemies
+                            .iter()
+                            .filter(|u| {
+                                let distance = u.position.distance_to(&me.position)
+                                    - self.constants.unit_radius;
+                                let seconds_to_enemy = distance
+                                    / self.constants.weapons[me.weapon.unwrap() as usize]
+                                        .projectile_speed;
+
+                                let line = Line::new(me.position, u.position);
+                                u.remaining_spawn_time.unwrap_or(0.0) < seconds_to_enemy
+                                    && !obstacles.iter().any(|o| {
+                                        let circle = o.as_circle(-self.constants.unit_radius);
+                                        circle.intercept_with_line(&line)
+                                    })
+                                    && !game
+                                        .units
+                                        .iter()
+                                        .filter(|u| u.player_id == game.my_id && u.id != me.id)
+                                        .any(|u| {
+                                            let circle = u.as_circle(self.constants.unit_radius);
+                                            circle.intercept_with_line(&line)
+                                        })
+                            })
+                            .min_by(|a, b| {
+                                let a_value = a.position.square_distance_to(&me.position);
+                                let b_value = b.position.square_distance_to(&me.position);
+                                a_value.partial_cmp(&b_value).unwrap()
+                            });
+                        let can_shoot_probably = enemies
+                            .iter()
+                            .filter(|u| {
+                                let distance = u.position.distance_to(&me.position)
+                                    - self.constants.unit_radius;
+                                let seconds_to_enemy = distance
+                                    / self.constants.weapons[me.weapon.unwrap() as usize]
+                                        .projectile_speed;
+
+                                let line = Line::new(me.position, u.position);
+                                u.remaining_spawn_time.unwrap_or(0.0) < seconds_to_enemy
+                                    && obstacles
+                                        .iter()
+                                        .filter(|o| {
+                                            let circle = o.as_circle(-self.constants.unit_radius);
+                                            circle.intercept_with_line(&line)
+                                        })
+                                        .count()
+                                        < 2
+                                    && !game
+                                        .units
+                                        .iter()
+                                        .filter(|u| u.player_id == game.my_id && u.id != me.id)
+                                        .any(|u| {
+                                            let circle = u.as_circle(self.constants.unit_radius);
+                                            circle.intercept_with_line(&line)
+                                        })
+                            })
+                            .min_by(|a, b| {
+                                let a_value = a.position.square_distance_to(&me.position);
+                                let b_value = b.position.square_distance_to(&me.position);
+                                a_value.partial_cmp(&b_value).unwrap()
+                            });
+
+                        if let Some(enemy) = can_shoot_right_now {
+                            Some(enemy)
+                        } else if let Some(enemy) = can_shoot_probably {
+                            Some(enemy)
+                        } else {
+                            enemies.iter().min_by(|a, b| {
+                                let a_value = a.position.square_distance_to(&me.position);
+                                let b_value = b.position.square_distance_to(&me.position);
+                                a_value.partial_cmp(&b_value).unwrap()
+                            })
+                        }
+                    } else {
+                        None
+                    };
+
+                    // TODO: get targets from other units
+                    let is_very_danger = self.pp.is_in_very_danger(me);
+                    let target_velocity = if !i_have_weapon && !is_very_danger {
+                        let target_position = if let Some(weapon_idx) = me.weapon {
+                            game.loot.iter().find(|l| l.is_ammo_for(weapon_idx))
+                        } else {
+                            game.loot.iter().find(|l| l.is_weapon())
+                        };
+                        let target_position = target_position
+                            .map(|l| l.position)
+                            .unwrap_or_else(|| me.position + me.direction.normalize() * 100.0);
+
+                        (target_position - me.position).normalize()
+                            * self.constants.max_unit_forward_speed
+                    } else if me.remaining_spawn_time.is_some()
+                        && !self.pp.im_inside_obstacle(me)
+                        && !self.pp.im_outside(me)
+                    {
+                        if let Some(spawned_unit) = spawned_unit {
+                            let distance = spawned_unit.position.distance_to(&me.position);
+                            let vec = (spawned_unit.position - me.position).normalize()
+                                * (distance - self.constants.unit_radius * 3.0);
+
+                            vec
+                        } else {
+                            let nearest_unspawned_unit = game
+                                .units
+                                .iter()
+                                .filter(|u| {
+                                    u.player_id == game.my_id
+                                        && u.remaining_spawn_time.is_some()
+                                        && u.id != me.id
+                                })
+                                .min_by(|a, b| {
+                                    a.position
+                                        .square_distance_to(&me.position)
+                                        .partial_cmp(&b.position.square_distance_to(&me.position))
+                                        .unwrap()
+                                });
+                            if let Some(nearest_unspawned_unit) = nearest_unspawned_unit {
+                                let distance =
+                                    nearest_unspawned_unit.position.distance_to(&me.position);
+                                if distance > self.constants.unit_radius * 7.0 {
+                                    (nearest_unspawned_unit.position - me.position).normalize()
+                                        * self.constants.max_unit_forward_speed
+                                } else if distance < self.constants.unit_radius * 3.0 {
+                                    (nearest_unspawned_unit.position - me.position)
+                                        .normalize()
+                                        .inverse()
+                                        * self.constants.max_unit_forward_speed
+                                } else {
+                                    if let Some(loot) = game
+                                        .loot
+                                        .iter()
+                                        .filter(|l| l.is_first_take_loot())
+                                        .min_by(|a, b| {
+                                            a.position
+                                                .square_distance_to(&me.position)
+                                                .partial_cmp(
+                                                    &b.position.square_distance_to(&me.position),
+                                                )
+                                                .unwrap()
+                                        })
+                                    {
+                                        (loot.position - me.position).normalize()
+                                            * self.constants.max_unit_forward_speed
+                                    } else {
+                                        Vec2::new(0.0, 0.0)
+                                    }
+                                }
+                            } else {
+                                if let Some(loot) =
+                                    game.loot.iter().filter(|l| l.is_first_take_loot()).min_by(
+                                        |a, b| {
+                                            a.position
+                                                .square_distance_to(&me.position)
+                                                .partial_cmp(
+                                                    &b.position.square_distance_to(&me.position),
+                                                )
+                                                .unwrap()
+                                        },
+                                    )
+                                {
+                                    (loot.position - me.position).normalize()
+                                        * self.constants.max_unit_forward_speed
+                                } else {
+                                    Vec2::new(0.0, 0.0)
+                                }
+                            }
+                        }
+                    } else if self.pp.is_in_danger(me) {
                         (*self
-                            .pp2
+                            .pp
                             .points_around(me.id)
                             .iter()
                             .max_by(|a, b| {
-                                let a_value = self.pp2.value(a);
-                                let b_value = self.pp2.value(b);
+                                let a_value = self.pp.value(a);
+                                let b_value = self.pp.value(b);
                                 a_value.partial_cmp(&b_value).unwrap()
                             })
-                            .unwrap()
+                            .unwrap_or(&game.zone.current_center)
                             - me.position)
                             .normalize()
                             * self.constants.max_unit_forward_speed
@@ -74,14 +272,14 @@ impl MyStrategy {
                             .iter()
                             .filter(|l| {
                                 l.is_useful_to_me(me, &self.constants)
-                                    && l.position.distance(&game.zone.current_center)
+                                    && l.position.distance_to(&game.zone.current_center)
                                         < game.zone.current_radius
                                             - self.constants.unit_radius * 2.0
                             })
                             .min_by(|l, r| {
                                 l.position
-                                    .square_distance(&me.position)
-                                    .partial_cmp(&r.position.square_distance(&me.position))
+                                    .square_distance_to(&me.position)
+                                    .partial_cmp(&r.position.square_distance_to(&me.position))
                                     .unwrap()
                             });
 
@@ -95,65 +293,28 @@ impl MyStrategy {
                             * self.constants.max_unit_forward_speed
                     };
 
-                    // TODO: запоминать врагов
-                    let closest_enemy =
-                        if me.weapon.is_some() && me.ammo[me.weapon.unwrap() as usize] > 0 {
-                            game.units
-                                .iter()
-                                .filter(|u| u.player_id != game.my_id)
-                                .filter(|u| {
-                                    let line = Line::new(me.position, u.position);
-                                    !self
-                                        .constants
-                                        .obstacles
-                                        .iter()
-                                        .filter(|o| !o.can_shoot_through)
-                                        .any(|o| {
-                                            let circle = o.as_circle(-self.constants.unit_radius);
-                                            circle.intercept_with_line(&line)
-                                        })
-                                })
-                                .min_by(|a, b| {
-                                    let a_value = a.position.square_distance(&me.position);
-                                    let b_value = b.position.square_distance(&me.position);
-                                    a_value.partial_cmp(&b_value).unwrap()
-                                })
-                        } else {
-                            None
-                        };
-
-                    let my_weapon_range = me
-                        .weapon
-                        .map(|w| {
-                            let prop = &self.constants.weapons[w as usize];
-                            prop.projectile_speed * prop.projectile_life_time
-                        })
-                        .unwrap_or(0.0);
-
                     let target_direction = if closest_enemy.is_some()
                         && closest_enemy
                             .unwrap()
                             .position
-                            .square_distance(&me.position)
+                            .square_distance_to(&me.position)
                             <= my_weapon_range.powi(2) * 1.5
                     {
-                        let distance = closest_enemy.unwrap().position.distance(&me.position)
+                        let distance = closest_enemy.unwrap().position.distance_to(&me.position)
                             - self.constants.unit_radius;
                         let seconds_to_enemy = distance
                             / self.constants.weapons[me.weapon.unwrap() as usize].projectile_speed;
                         closest_enemy.unwrap().position
                             + closest_enemy.unwrap().velocity * seconds_to_enemy * 0.77
                             - me.position
+                    } else if let Some(sound) = self.pp.sounds().iter().min_by(|a, b| {
+                        let a_dist = me.position.square_distance_to(&a.position);
+                        let b_dist = me.position.square_distance_to(&b.position);
+                        a_dist.partial_cmp(&b_dist).unwrap()
+                    }) {
+                        sound.position - me.position
                     } else {
-                        if let Some(sound) = self.pp2.sounds().iter().min_by(|a, b| {
-                            let a_dist = me.position.square_distance(&a.position);
-                            let b_dist = me.position.square_distance(&b.position);
-                            a_dist.partial_cmp(&b_dist).unwrap()
-                        }) {
-                            sound.position - me.position
-                        } else {
-                            target_velocity
-                        }
+                        target_velocity
                     }
                     .normalize();
 
@@ -166,7 +327,7 @@ impl MyStrategy {
                                 && closest_enemy
                                     .unwrap()
                                     .position
-                                    .square_distance(&me.position)
+                                    .square_distance_to(&me.position)
                                     < my_weapon_range.powi(2) * 1.5
                             {
                                 let closest_enemy = closest_enemy.unwrap();
@@ -179,7 +340,7 @@ impl MyStrategy {
                                     me.position,
                                     me.position + (me.direction.normalize() * weapon_range),
                                 );
-                                let d = closest_enemy.position.distance(&me.position);
+                                let d = closest_enemy.position.distance_to(&me.position);
                                 if aim.length() > d + self.constants.unit_radius * 2.0 {
                                     aim.set_length(d + self.constants.unit_radius * 2.0)
                                 }
@@ -214,13 +375,19 @@ impl MyStrategy {
                                     .iter()
                                     .filter(|o| !o.can_shoot_through)
                                     .any(|o| o.as_circle(0.0).intercept_with_line(&aim));
+                                let unit_on_line = game.units.iter().any(|u| {
+                                    u.id != me.id
+                                        && u.player_id == game.my_id
+                                        && u.as_circle(self.constants.unit_radius)
+                                            .intercept_with_line(&aim)
+                                });
 
-                                if obstacle_on_line && d > weapon_range {
+                                if obstacle_on_line || unit_on_line || d > weapon_range {
                                     if let Some(loot) = game
                                         .loot
                                         .iter()
                                         .filter(|l| {
-                                            l.position.distance(&me.position)
+                                            l.position.distance_to(&me.position)
                                                 <= self.constants.unit_radius
                                                 && l.is_useful_to_me(me, &self.constants)
                                         })
@@ -235,17 +402,22 @@ impl MyStrategy {
                                         None
                                     }
                                 } else {
+                                    let remaining_spawn_time =
+                                        closest_enemy.remaining_spawn_time.unwrap_or(-1.0);
                                     Some(ActionOrder::Aim {
                                         shoot: !obstacle_on_line
+                                            && !unit_on_line
                                             && enemy_circle.intercept_with_line(&aim)
-                                            && d <= weapon_range,
+                                            && d <= weapon_range
+                                            && remaining_spawn_time < seconds_to_enemy,
                                     })
                                 }
                             } else if let Some(loot) = game
                                 .loot
                                 .iter()
                                 .filter(|l| {
-                                    l.position.distance(&me.position) <= self.constants.unit_radius
+                                    l.position.distance_to(&me.position)
+                                        <= self.constants.unit_radius
                                         && l.is_useful_to_me(me, &self.constants)
                                 })
                                 .next()
