@@ -345,9 +345,8 @@ impl MyStrategy {
                                     aim.set_length(d + self.constants.unit_radius * 2.0)
                                 }
 
-                                let seconds_to_enemy = (d - self.constants.unit_radius)
-                                    / self.constants.weapons[me.weapon.unwrap() as usize]
-                                        .projectile_speed;
+                                let seconds_to_enemy =
+                                    (d + self.constants.unit_radius) / weapon.projectile_speed;
 
                                 // debug_interface.add_poly_line(
                                 //     vec![aim.start, aim.end],
@@ -376,8 +375,14 @@ impl MyStrategy {
                                     .filter(|o| !o.can_shoot_through)
                                     .any(|o| o.as_circle(0.0).intercept_with_line(&aim));
                                 let unit_on_line = game.units.iter().any(|u| {
+                                    let respawning_time = u.remaining_spawn_time.unwrap_or(0.0);
+                                    let d = u.position.distance_to(&me.position);
+                                    let seconds_to_unit =
+                                        (d + self.constants.unit_radius) / weapon.projectile_speed;
+
                                     u.id != me.id
                                         && u.player_id == game.my_id
+                                        && seconds_to_unit > respawning_time
                                         && u.as_circle(self.constants.unit_radius)
                                             .intercept_with_line(&aim)
                                 });
