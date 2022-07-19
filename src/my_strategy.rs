@@ -194,10 +194,8 @@ impl MyStrategy {
                     {
                         if let Some(spawned_unit) = spawned_unit {
                             let distance = spawned_unit.position.distance_to(&me.position);
-                            let vec = (spawned_unit.position - me.position).normalize()
-                                * (distance - self.constants.unit_radius * 3.0);
-
-                            vec
+                            (spawned_unit.position - me.position).normalize()
+                                * (distance - self.constants.unit_radius * 4.0)
                         } else {
                             let nearest_unspawned_unit = game
                                 .units
@@ -218,12 +216,12 @@ impl MyStrategy {
                                     nearest_unspawned_unit.position.distance_to(&me.position);
                                 if distance > self.constants.unit_radius * 7.0 {
                                     (nearest_unspawned_unit.position - me.position).normalize()
-                                        * self.constants.max_unit_forward_speed
+                                        * self.constants.spawn_movement_speed
                                 } else if distance < self.constants.unit_radius * 3.0 {
                                     (nearest_unspawned_unit.position - me.position)
                                         .normalize()
                                         .inverse()
-                                        * self.constants.max_unit_forward_speed
+                                        * self.constants.spawn_movement_speed
                                 } else {
                                     if let Some(loot) = game
                                         .loot
@@ -239,7 +237,7 @@ impl MyStrategy {
                                         })
                                     {
                                         (loot.position - me.position).normalize()
-                                            * self.constants.max_unit_forward_speed
+                                            * self.constants.spawn_movement_speed
                                     } else {
                                         Vec2::new(0.0, 0.0)
                                     }
@@ -258,7 +256,7 @@ impl MyStrategy {
                                     )
                                 {
                                     (loot.position - me.position).normalize()
-                                        * self.constants.max_unit_forward_speed
+                                        * self.constants.spawn_movement_speed
                                 } else {
                                     Vec2::new(0.0, 0.0)
                                 }
@@ -401,26 +399,29 @@ impl MyStrategy {
                                         + closest_enemy.velocity * seconds_to_enemy * 0.77,
                                     self.constants.unit_radius * 0.9,
                                 );
-                                let obstacle_on_line = self
+                                let obstacles_on_line = self
                                     .constants
                                     .obstacles
                                     .iter()
                                     .filter(|o| !o.can_shoot_through)
-                                    .any(|o| o.as_circle(0.0).intercept_with_line(&aim));
-                                let unit_on_line = game.units.iter().any(|u| {
-                                    let respawning_time = u.remaining_spawn_time.unwrap_or(0.0);
-                                    let d = u.position.distance_to(&me.position);
-                                    let seconds_to_unit =
-                                        (d + self.constants.unit_radius) / weapon.projectile_speed;
+                                    .filter(|o| o.as_circle(0.0).intercept_with_line(&aim))
+                                    .count();
+                                let unit_on_line = game
+                                    .units
+                                    .iter()
+                                    .filter(|u| u.player_id == game.my_id && u.id != me.id)
+                                    .any(|u| {
+                                        let respawning_time = u.remaining_spawn_time.unwrap_or(0.0);
+                                        let d = u.position.distance_to(&me.position);
+                                        let seconds_to_unit = (d + self.constants.unit_radius)
+                                            / weapon.projectile_speed;
 
-                                    u.id != me.id
-                                        && u.player_id == game.my_id
-                                        && seconds_to_unit > respawning_time
-                                        && u.as_circle(self.constants.unit_radius)
-                                            .intercept_with_line(&aim)
-                                });
+                                        seconds_to_unit > respawning_time
+                                            && u.as_circle(self.constants.unit_radius)
+                                                .intercept_with_line(&aim)
+                                    });
 
-                                if obstacle_on_line || unit_on_line || d > weapon_range {
+                                if obstacles_on_line > 1 || d > weapon_range {
                                     if let Some(loot) = game
                                         .loot
                                         .iter()
@@ -442,12 +443,14 @@ impl MyStrategy {
                                 } else {
                                     let remaining_spawn_time =
                                         closest_enemy.remaining_spawn_time.unwrap_or(-1.0);
+                                    let seconds_to_unspawned_enemy =
+                                        (d - self.constants.unit_radius) / weapon.projectile_speed;
                                     Some(ActionOrder::Aim {
-                                        shoot: !obstacle_on_line
+                                        shoot: obstacles_on_line == 0
                                             && !unit_on_line
                                             && enemy_circle.intercept_with_line(&aim)
-                                            && d <= weapon_range
-                                            && remaining_spawn_time < seconds_to_enemy,
+                                            && d <= weapon_range + self.constants.unit_radius * 2.0
+                                            && remaining_spawn_time < seconds_to_unspawned_enemy,
                                     })
                                 }
                             } else if let Some(loot) = game

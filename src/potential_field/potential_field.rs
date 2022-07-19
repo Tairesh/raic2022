@@ -228,7 +228,7 @@ impl PotentialField {
     fn value_outside(&self, position: &Vec2) -> f64 {
         let distance = self.zone.current_center.distance_to(position);
         if self.zone.current_radius - distance < self.constants.unit_radius * 2.0 {
-            return -3.0 * (distance / self.zone.current_radius);
+            return -10.0 * (distance / self.zone.current_radius);
         }
 
         0.0
