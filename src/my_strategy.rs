@@ -1,7 +1,7 @@
 use crate::debug_interface::DebugInterface;
 // use ai_cup_22::debugging::Color;
 use ai_cup_22::model::*;
-use ai_cup_22::potential_field::PotentialField;
+use ai_cup_22::potential_field::{FightMode, PotentialField};
 use std::f64::consts::PI;
 
 pub struct MyStrategy {
@@ -163,6 +163,19 @@ impl MyStrategy {
 
                     // TODO: get targets from other units
                     let is_very_danger = self.pp.is_in_very_danger(me);
+
+                    let enemies_sum_hp = enemies.iter().map(|u| u.health + u.shield).sum::<f64>();
+
+                    let fight_mode = if i_have_weapon {
+                        if enemies_sum_hp < (me.health + me.shield) {
+                            FightMode::Attack
+                        } else {
+                            FightMode::Defend
+                        }
+                    } else {
+                        FightMode::RunWithNoWeapons
+                    };
+
                     let target_velocity = if !i_have_weapon && !is_very_danger {
                         let target_position = if let Some(weapon_idx) = me.weapon {
                             game.loot.iter().find(|l| l.is_ammo_for(weapon_idx))
@@ -257,8 +270,8 @@ impl MyStrategy {
                             .points_around(me.id)
                             .iter()
                             .max_by(|a, b| {
-                                let a_value = self.pp.value(a);
-                                let b_value = self.pp.value(b);
+                                let a_value = self.pp.value(a, me, fight_mode);
+                                let b_value = self.pp.value(b, me, fight_mode);
                                 a_value.partial_cmp(&b_value).unwrap()
                             })
                             .unwrap_or(&game.zone.current_center)
@@ -286,7 +299,27 @@ impl MyStrategy {
                         let target_position = if let Some(bonus) = bonus {
                             bonus.position
                         } else {
-                            me.position + me.direction.rotate(PI / 10.0) * 5.0
+                            let nearest_ally = game
+                                .units
+                                .iter()
+                                .filter(|u| u.player_id == game.my_id && u.id != me.id)
+                                .filter(|u| {
+                                    u.position.distance_to(&me.position)
+                                        > self.constants.unit_radius * 4.0
+                                })
+                                .min_by(|a, b| {
+                                    a.position
+                                        .square_distance_to(&me.position)
+                                        .partial_cmp(&b.position.square_distance_to(&me.position))
+                                        .unwrap()
+                                });
+                            if let Some(ally) = nearest_ally {
+                                ally.position
+                            } else {
+                                let vec =
+                                    (me.position - game.zone.current_center).rotate(PI / 10.0);
+                                game.zone.current_center + vec
+                            }
                         };
 
                         (target_position - me.position).normalize()

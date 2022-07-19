@@ -1,4 +1,5 @@
 use crate::model::*;
+use crate::potential_field::FightMode;
 use std::collections::HashSet;
 use std::f64::consts::PI;
 use std::ops::Not;
@@ -227,7 +228,7 @@ impl PotentialField {
     fn value_outside(&self, position: &Vec2) -> f64 {
         let distance = self.zone.current_center.distance_to(position);
         if self.zone.current_radius - distance < self.constants.unit_radius * 2.0 {
-            return -distance / self.zone.current_radius;
+            return -3.0 * (distance / self.zone.current_radius);
         }
 
         0.0
@@ -280,8 +281,9 @@ impl PotentialField {
         value
     }
 
-    fn value_enemies(&self, position: &Vec2) -> f64 {
+    fn value_enemies(&self, position: &Vec2, me: &Unit, fight_mode: FightMode) -> f64 {
         let mut value = 0.0;
+        let my_range = me.range(&self.constants);
 
         // TODO: запоминать врагов
         for enemy in self
@@ -289,45 +291,78 @@ impl PotentialField {
             .iter()
             .filter(|u| u.player_id != self.my_id)
         {
-            let distance = enemy.position.distance_to(position);
-            let distance_limit = self.constants.unit_radius * 5.0;
-            if distance < distance_limit {
+            let distance_to_enemy = enemy.position.distance_to(position);
+            let enemy_range = enemy.range(&self.constants);
+            match fight_mode {
+                FightMode::Attack => {
+                    // отходим на границу моего ренджа, подходим ближе если не можем стрелять, не ближе 20.0 примерно (уверенного попадания из лука и огнемета), нападаем если у него нет оружия
+                    let target_distance = if let Some(my_range) = my_range {
+                        my_range * 0.75
+                    } else {
+                        50.0
+                    };
+
+                    if distance_to_enemy < target_distance {
+                        value -= 1.0 - distance_to_enemy / target_distance;
+                    } else if distance_to_enemy < target_distance * 4.0 {
+                        value += (distance_to_enemy / target_distance - 1.0) * 0.5;
+                    }
+                }
+                FightMode::Defend => {
+                    // отходим за границу его ренджа, на наш не особо обращаем внимание, но нападаем если у него нет оружия
+                    if let Some(enemy_range) = enemy_range {
+                        value -= 1.0 - distance_to_enemy / enemy_range;
+                    } else {
+                        let target_distance = my_range.unwrap_or(60.0) * 0.75;
+                        if distance_to_enemy < target_distance {
+                            value -= 1.0 - distance_to_enemy / target_distance;
+                        } else if distance_to_enemy < target_distance * 2.0 {
+                            value += (distance_to_enemy / target_distance - 1.0) * 0.25;
+                        }
+                    }
+                }
+                FightMode::RunWithNoWeapons => {
+                    // убегаем за границу его ренджа
+                    let range = enemy.range(&self.constants).unwrap_or(20.0);
+                    value -= 1.0 - distance_to_enemy / range;
+                }
+            }
+
+            if let Some(enemy_range) = enemy_range {
+                let aim = Line::new(
+                    enemy.position,
+                    enemy.position + enemy.direction.normalize() * enemy_range,
+                );
+
+                let distance = aim.distance_to_point(&position);
+                let distance_limit = self.constants.unit_radius * 3.0;
+                if distance > distance_limit {
+                    continue;
+                }
+
                 value -= (1.0 - distance / distance_limit) * 0.5;
             }
+        }
 
-            if enemy.aim == 0.0 {
-                continue;
+        value
+    }
+
+    pub fn value_allies(&self, position: &Vec2, me: &Unit) -> f64 {
+        let mut value = 0.0;
+
+        for ally in self
+            .seeing_units
+            .iter()
+            .filter(|u| u.player_id == self.my_id && u.id != me.id)
+        {
+            let distance_to_ally = ally.position.distance_to(position);
+            let min_distance = self.constants.unit_radius * 3.0;
+            let max_distance = self.constants.unit_radius * 10.0;
+            if distance_to_ally < min_distance {
+                value -= 1.0 - distance_to_ally / min_distance;
+            } else if distance_to_ally > max_distance {
+                value += max_distance / distance_to_ally
             }
-
-            if enemy.weapon.is_none() {
-                continue;
-            }
-
-            let weapon = enemy.weapon.unwrap() as usize;
-
-            if enemy.ammo[weapon] == 0 {
-                continue;
-            }
-
-            let prop = &self.constants.weapons[weapon];
-            let range = prop.projectile_life_time * prop.projectile_speed;
-
-            if distance > range * 1.5 {
-                value -= (distance - range * 1.5) / 300.0;
-            }
-
-            let aim = Line::new(
-                enemy.position,
-                enemy.position + enemy.direction.normalize() * range,
-            );
-
-            let distance = aim.distance_to_point(&position);
-            let distance_limit = range;
-            if distance > distance_limit {
-                continue;
-            }
-
-            value -= (1.0 - distance / distance_limit) * 0.5;
         }
 
         value
@@ -387,8 +422,12 @@ impl PotentialField {
         sounds
     }
 
-    pub fn value(&self, position: &Vec2) -> f64 {
-        if !self.dangerous_projectiles.is_empty() {
+    pub fn value(&self, position: &Vec2, me: &Unit, fight_mode: FightMode) -> f64 {
+        if self
+            .dangerous_projectiles
+            .iter()
+            .any(|p| p.is_dangerous(me, &self.constants))
+        {
             return self.value_projectiles(position) + self.value_outside(position);
         }
 
@@ -397,6 +436,7 @@ impl PotentialField {
             + self.value_shooting_sounds(position)
             + self.value_hit_sounds(position)
             + self.value_steps_sounds(position)
-            + self.value_enemies(position)
+            + self.value_enemies(position, me, fight_mode)
+            + self.value_allies(position, me)
     }
 }

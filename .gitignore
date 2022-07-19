@@ -6,5 +6,5 @@
 /.idea/
 
 # RAIC stuff
-/solution*.zip
+/*.zip
 /prev/

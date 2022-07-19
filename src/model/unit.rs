@@ -41,6 +41,18 @@ impl Unit {
     pub fn as_circle(&self, unit_radius: f64) -> Circle {
         Circle::new(self.position, unit_radius)
     }
+
+    pub fn range(&self, constants: &Constants) -> Option<f64> {
+        if let Some(weapon) = self.weapon {
+            if self.ammo[weapon as usize] > 0 {
+                Some(constants.weapons[weapon as usize].range())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
 }
 
 impl trans::Trans for Unit {
