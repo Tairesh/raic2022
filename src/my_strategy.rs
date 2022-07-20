@@ -7,13 +7,23 @@ use std::f64::consts::PI;
 pub struct MyStrategy {
     constants: Constants,
     pp: PotentialField,
+    obstacles_cant_shoot_through: Vec<Obstacle>,
 }
 
 impl MyStrategy {
     pub fn new(constants: Constants) -> Self {
         // dbg!(&constants);
         let pp = PotentialField::new(&constants);
-        Self { constants, pp }
+        Self {
+            obstacles_cant_shoot_through: constants
+                .obstacles
+                .iter()
+                .filter(|o| !o.can_shoot_through)
+                .cloned()
+                .collect(),
+            constants,
+            pp,
+        }
     }
     pub fn get_order(
         &mut self,
@@ -23,17 +33,6 @@ impl MyStrategy {
         // let debug_interface = _debug_interface.unwrap();
         self.pp.update(game);
 
-        let spawned_unit = game
-            .units
-            .iter()
-            .find(|u| u.player_id == game.my_id && u.remaining_spawn_time.is_none());
-
-        let obstacles: Vec<&Obstacle> = self
-            .constants
-            .obstacles
-            .iter()
-            .filter(|o| !o.can_shoot_through)
-            .collect();
         let enemies: Vec<&Unit> = game
             .units
             .iter()
@@ -94,7 +93,7 @@ impl MyStrategy {
 
                                 let line = Line::new(me.position, u.position);
                                 u.remaining_spawn_time.unwrap_or(0.0) < seconds_to_enemy
-                                    && !obstacles.iter().any(|o| {
+                                    && !self.obstacles_cant_shoot_through.iter().any(|o| {
                                         let circle = o.as_circle(-self.constants.unit_radius);
                                         circle.intercept_with_line(&line)
                                     })
@@ -123,7 +122,8 @@ impl MyStrategy {
 
                                 let line = Line::new(me.position, u.position);
                                 u.remaining_spawn_time.unwrap_or(0.0) < seconds_to_enemy
-                                    && obstacles
+                                    && self
+                                        .obstacles_cant_shoot_through
                                         .iter()
                                         .filter(|o| {
                                             let circle = o.as_circle(-self.constants.unit_radius);
@@ -192,76 +192,19 @@ impl MyStrategy {
                         && !self.pp.im_inside_obstacle(me)
                         && !self.pp.im_outside(me)
                     {
-                        if let Some(spawned_unit) = spawned_unit {
-                            let distance = spawned_unit.position.distance_to(&me.position);
-                            (spawned_unit.position - me.position).normalize()
-                                * (distance - self.constants.unit_radius * 4.0)
-                        } else {
-                            let nearest_unspawned_unit = game
-                                .units
-                                .iter()
-                                .filter(|u| {
-                                    u.player_id == game.my_id
-                                        && u.remaining_spawn_time.is_some()
-                                        && u.id != me.id
-                                })
-                                .min_by(|a, b| {
-                                    a.position
-                                        .square_distance_to(&me.position)
-                                        .partial_cmp(&b.position.square_distance_to(&me.position))
-                                        .unwrap()
-                                });
-                            if let Some(nearest_unspawned_unit) = nearest_unspawned_unit {
-                                let distance =
-                                    nearest_unspawned_unit.position.distance_to(&me.position);
-                                if distance > self.constants.unit_radius * 7.0 {
-                                    (nearest_unspawned_unit.position - me.position).normalize()
-                                        * self.constants.spawn_movement_speed
-                                } else if distance < self.constants.unit_radius * 3.0 {
-                                    (nearest_unspawned_unit.position - me.position)
-                                        .normalize()
-                                        .inverse()
-                                        * self.constants.spawn_movement_speed
-                                } else {
-                                    if let Some(loot) = game
-                                        .loot
-                                        .iter()
-                                        .filter(|l| l.is_first_take_loot())
-                                        .min_by(|a, b| {
-                                            a.position
-                                                .square_distance_to(&me.position)
-                                                .partial_cmp(
-                                                    &b.position.square_distance_to(&me.position),
-                                                )
-                                                .unwrap()
-                                        })
-                                    {
-                                        (loot.position - me.position).normalize()
-                                            * self.constants.spawn_movement_speed
-                                    } else {
-                                        Vec2::new(0.0, 0.0)
-                                    }
-                                }
-                            } else {
-                                if let Some(loot) =
-                                    game.loot.iter().filter(|l| l.is_first_take_loot()).min_by(
-                                        |a, b| {
-                                            a.position
-                                                .square_distance_to(&me.position)
-                                                .partial_cmp(
-                                                    &b.position.square_distance_to(&me.position),
-                                                )
-                                                .unwrap()
-                                        },
-                                    )
-                                {
-                                    (loot.position - me.position).normalize()
-                                        * self.constants.spawn_movement_speed
-                                } else {
-                                    Vec2::new(0.0, 0.0)
-                                }
-                            }
-                        }
+                        (*self
+                            .pp
+                            .points_around(me.id)
+                            .iter()
+                            .max_by(|a, b| {
+                                let a_value = self.pp.value_unspawned(a, me);
+                                let b_value = self.pp.value_unspawned(b, me);
+                                a_value.partial_cmp(&b_value).unwrap()
+                            })
+                            .unwrap_or(&game.zone.current_center)
+                            - me.position)
+                            .normalize()
+                            * self.constants.spawn_movement_speed
                     } else if self.pp.is_in_danger(me) {
                         (*self
                             .pp

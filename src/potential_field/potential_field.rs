@@ -7,6 +7,7 @@ use std::ops::Not;
 pub struct PotentialField {
     constants: Constants,
     seeing_units: Vec<Unit>,
+    // old_enemies: Vec<Unit>,
     seeing_projectiles: Vec<Projectile>,
     pub dangerous_projectiles: Vec<Projectile>,
     pub old_projectiles: Vec<Projectile>,
@@ -23,6 +24,7 @@ impl PotentialField {
         Self {
             constants: constants.clone(),
             seeing_units: Vec::new(),
+            // old_enemies: Vec::new(),
             seeing_projectiles: Vec::new(),
             old_projectiles: Vec::new(),
             dangerous_projectiles: Vec::new(),
@@ -39,6 +41,33 @@ impl PotentialField {
         self.current_tick = game.current_tick;
         self.my_id = game.my_id;
         self.seeing_units = game.units.clone();
+        // let seeing_units_ids = self
+        //     .seeing_units
+        //     .iter()
+        //     .map(|u| u.id)
+        //     .collect::<HashSet<_>>();
+        // self.old_enemies
+        //     .retain(|u| !seeing_units_ids.contains(&u.id));
+        // // TODO: удалять тех чьи позиции в FOV моих юнитов
+        // self.old_enemies.iter_mut().for_each(|enemy| {
+        //     let closest_my_unit = game
+        //         .units
+        //         .iter()
+        //         .filter(|u| u.player_id == game.my_id)
+        //         .min_by(|a, b| {
+        //             a.position
+        //                 .square_distance_to(&enemy.position)
+        //                 .partial_cmp(&b.position.square_distance_to(&enemy.position))
+        //                 .unwrap()
+        //         });
+        //     if let Some(closest_my_unit) = closest_my_unit {
+        //         enemy.direction = (closest_my_unit.position - enemy.position).normalize();
+        //     }
+        //     enemy
+        //         .ammo
+        //         .iter_mut()
+        //         .for_each(|ammo| *ammo = *ammo.max(&mut 10));
+        // });
         self.seeing_projectiles = game.projectiles.clone();
         self.zone = game.zone.clone();
         self.old_projectiles
@@ -52,7 +81,6 @@ impl PotentialField {
         self.old_projectiles
             .retain(|p| p.life_time >= 0.0 && !seeing_projectiles_ids.contains(&p.id));
 
-        // TODO: should be dangerous for a unit not for any unit
         self.dangerous_projectiles = game
             .projectiles
             .iter()
@@ -171,6 +199,7 @@ impl PotentialField {
 
         (0..8)
             .map(|i| {
+                // TODO: может быть нужно больше точек?
                 let angle = (i * 45) as f64 * PI / 180.0;
                 Vec2::new(
                     position.x + angle.cos() * self.constants.unit_radius,
@@ -438,5 +467,14 @@ impl PotentialField {
             + self.value_steps_sounds(position)
             + self.value_enemies(position, me, fight_mode)
             + self.value_allies(position, me)
+    }
+
+    pub fn value_unspawned(&self, position: &Vec2, me: &Unit) -> f64 {
+        self.value_zone(position) * 5.0
+            + self.value_outside(position) * 5.0
+            + self.value_shooting_sounds(position)
+            + self.value_hit_sounds(position)
+            + self.value_steps_sounds(position)
+            + self.value_enemies(position, me, FightMode::RunWithNoWeapons)
     }
 }
