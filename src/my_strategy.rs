@@ -1,7 +1,6 @@
 use crate::debug_interface::DebugInterface;
-// use ai_cup_22::debugging::Color;
 use ai_cup_22::model::*;
-use ai_cup_22::potential_field::{FightMode, PotentialField};
+use ai_cup_22::potential_field::*;
 use std::f64::consts::PI;
 
 pub struct MyStrategy {
@@ -33,11 +32,12 @@ impl MyStrategy {
         // let debug_interface = _debug_interface.unwrap();
         self.pp.update(game);
 
-        let enemies: Vec<&Unit> = game
+        let mut enemies: Vec<&Unit> = game
             .units
             .iter()
             .filter(|u| u.player_id != game.my_id)
             .collect();
+        enemies.extend(self.pp.old_enemies.iter());
 
         // for sound in game.sounds.iter() {
         //     debug_interface.add_circle(sound.position, 1.0, Color::new(0.0, 1.0, 0.0, 0.8));
@@ -58,8 +58,68 @@ impl MyStrategy {
                 .iter()
                 .filter(|u| u.player_id == game.my_id)
                 .map(|me| {
-                    // for point in self.pp2.points_around(me.id).iter() {
-                    //     let value = self.pp2.value(point);
+                    // debug_interface.add_arc(
+                    //     me.position,
+                    //     self.constants.view_distance,
+                    //     0.5,
+                    //     normalize_angle(me.direction.angle() - me.fov_angle(&self.constants) / 2.0),
+                    //     normalize_angle(me.direction.angle() + me.fov_angle(&self.constants) / 2.0),
+                    //     Color::new(0.0, 0.0, 0.0, 0.8),
+                    // );
+                    // debug_interface.add_segment(
+                    //     me.position,
+                    //     me.position
+                    //         + me.direction
+                    //             .rotate(-me.fov_angle(&self.constants) / 2.0)
+                    //             .normalize()
+                    //             * self.constants.view_distance,
+                    //     0.5,
+                    //     Color::new(0.0, 0.0, 0.0, 0.8),
+                    // );
+                    // debug_interface.add_segment(
+                    //     me.position,
+                    //     me.position
+                    //         + me.direction
+                    //             .rotate(me.fov_angle(&self.constants) / 2.0)
+                    //             .normalize()
+                    //             * self.constants.view_distance,
+                    //     0.5,
+                    //     Color::new(0.0, 0.0, 0.0, 0.8),
+                    // );
+                    // for enemy in self.pp.old_enemies.iter() {
+                    //     if me.is_in_fov(enemy.position, &self.constants) {
+                    //         debug_interface.add_circle(
+                    //             enemy.position,
+                    //             1.0,
+                    //             Color::new(1.0, 0.0, 0.0, 0.5),
+                    //         );
+                    //     } else {
+                    //         debug_interface.add_circle(
+                    //             enemy.position,
+                    //             1.0,
+                    //             Color::new(0.0, 1.0, 0.0, 0.5),
+                    //         );
+                    //     }
+                    // }
+                    let i_have_weapon =
+                        me.weapon.is_some() && me.ammo[me.weapon.unwrap() as usize] > 0;
+
+                    let enemies_sum_hp = enemies.iter().map(|u| u.health + u.shield).sum::<f64>();
+
+                    let fight_mode = if i_have_weapon {
+                        if enemies_sum_hp < (me.health + me.shield)
+                        // && me.next_shot_tick <= game.current_tick
+                        {
+                            FightMode::Attack
+                        } else {
+                            FightMode::Defend
+                        }
+                    } else {
+                        FightMode::RunWithNoWeapons
+                    };
+
+                    // for point in self.pp.points_around(me.id).iter() {
+                    //     let value = self.pp.value(*point, me, fight_mode);
                     //     // debug_interface.add_circle(*point, 0.5, color_by_value(value));
                     //     debug_interface.add_placed_text(
                     //         *point,
@@ -69,8 +129,6 @@ impl MyStrategy {
                     //         Color::BLACK,
                     //     );
                     // }
-                    let i_have_weapon =
-                        me.weapon.is_some() && me.ammo[me.weapon.unwrap() as usize] > 0;
 
                     let my_weapon_range = me
                         .weapon
@@ -164,18 +222,6 @@ impl MyStrategy {
                     // TODO: get targets from other units
                     let is_very_danger = self.pp.is_in_very_danger(me);
 
-                    let enemies_sum_hp = enemies.iter().map(|u| u.health + u.shield).sum::<f64>();
-
-                    let fight_mode = if i_have_weapon {
-                        if enemies_sum_hp < (me.health + me.shield) {
-                            FightMode::Attack
-                        } else {
-                            FightMode::Defend
-                        }
-                    } else {
-                        FightMode::RunWithNoWeapons
-                    };
-
                     let target_velocity = if !i_have_weapon && !is_very_danger {
                         let target_position = if let Some(weapon_idx) = me.weapon {
                             game.loot.iter().find(|l| l.is_ammo_for(weapon_idx))
@@ -196,9 +242,9 @@ impl MyStrategy {
                             .pp
                             .points_around(me.id)
                             .iter()
-                            .max_by(|a, b| {
-                                let a_value = self.pp.value_unspawned(a, me);
-                                let b_value = self.pp.value_unspawned(b, me);
+                            .max_by(|&a, &b| {
+                                let a_value = self.pp.value_unspawned(*a, me);
+                                let b_value = self.pp.value_unspawned(*b, me);
                                 a_value.partial_cmp(&b_value).unwrap()
                             })
                             .unwrap_or(&game.zone.current_center)
@@ -210,9 +256,9 @@ impl MyStrategy {
                             .pp
                             .points_around(me.id)
                             .iter()
-                            .max_by(|a, b| {
-                                let a_value = self.pp.value(a, me, fight_mode);
-                                let b_value = self.pp.value(b, me, fight_mode);
+                            .max_by(|&a, &b| {
+                                let a_value = self.pp.value(*a, me, fight_mode);
+                                let b_value = self.pp.value(*b, me, fight_mode);
                                 a_value.partial_cmp(&b_value).unwrap()
                             })
                             .unwrap_or(&game.zone.current_center)
@@ -246,7 +292,7 @@ impl MyStrategy {
                                 .filter(|u| u.player_id == game.my_id && u.id != me.id)
                                 .filter(|u| {
                                     u.position.distance_to(&me.position)
-                                        > self.constants.unit_radius * 4.0
+                                        > self.constants.unit_radius * 8.0
                                 })
                                 .min_by(|a, b| {
                                     a.position

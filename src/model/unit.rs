@@ -1,4 +1,5 @@
 use super::*;
+use crate::potential_field::normalize_angle;
 
 /// A unit
 #[derive(Clone, Debug)]
@@ -52,6 +53,25 @@ impl Unit {
         } else {
             None
         }
+    }
+
+    pub fn fov_angle(&self, constants: &Constants) -> f64 {
+        if self.aim == 0.0 {
+            constants.field_of_view
+        } else {
+            constants.weapons[self.weapon.unwrap() as usize].aim_field_of_view
+        }
+        .to_radians()
+    }
+
+    pub fn is_in_fov(&self, position: Vec2, constants: &Constants) -> bool {
+        let vec = position - self.position;
+        if vec.length() >= constants.view_distance {
+            return false;
+        }
+        let angle = normalize_angle(vec.angle() - self.direction.angle()).abs();
+
+        angle <= self.fov_angle(constants) / 2.0
     }
 }
 

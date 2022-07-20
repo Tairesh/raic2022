@@ -4,10 +4,21 @@ use std::collections::HashSet;
 use std::f64::consts::PI;
 use std::ops::Not;
 
+pub fn normalize_angle(angle: f64) -> f64 {
+    let mut angle = angle;
+    while angle < -PI {
+        angle += 2.0 * PI;
+    }
+    while angle > PI {
+        angle -= 2.0 * PI;
+    }
+    angle
+}
+
 pub struct PotentialField {
     constants: Constants,
     seeing_units: Vec<Unit>,
-    // old_enemies: Vec<Unit>,
+    pub old_enemies: Vec<Unit>,
     seeing_projectiles: Vec<Projectile>,
     pub dangerous_projectiles: Vec<Projectile>,
     pub old_projectiles: Vec<Projectile>,
@@ -24,7 +35,7 @@ impl PotentialField {
         Self {
             constants: constants.clone(),
             seeing_units: Vec::new(),
-            // old_enemies: Vec::new(),
+            old_enemies: Vec::new(),
             seeing_projectiles: Vec::new(),
             old_projectiles: Vec::new(),
             dangerous_projectiles: Vec::new(),
@@ -40,34 +51,55 @@ impl PotentialField {
     pub fn update(&mut self, game: &Game) {
         self.current_tick = game.current_tick;
         self.my_id = game.my_id;
+        self.old_enemies.extend(self.seeing_units.iter().cloned());
         self.seeing_units = game.units.clone();
-        // let seeing_units_ids = self
-        //     .seeing_units
-        //     .iter()
-        //     .map(|u| u.id)
-        //     .collect::<HashSet<_>>();
-        // self.old_enemies
-        //     .retain(|u| !seeing_units_ids.contains(&u.id));
-        // // TODO: удалять тех чьи позиции в FOV моих юнитов
-        // self.old_enemies.iter_mut().for_each(|enemy| {
-        //     let closest_my_unit = game
-        //         .units
-        //         .iter()
-        //         .filter(|u| u.player_id == game.my_id)
-        //         .min_by(|a, b| {
-        //             a.position
-        //                 .square_distance_to(&enemy.position)
-        //                 .partial_cmp(&b.position.square_distance_to(&enemy.position))
-        //                 .unwrap()
-        //         });
-        //     if let Some(closest_my_unit) = closest_my_unit {
-        //         enemy.direction = (closest_my_unit.position - enemy.position).normalize();
-        //     }
-        //     enemy
-        //         .ammo
-        //         .iter_mut()
-        //         .for_each(|ammo| *ammo = *ammo.max(&mut 10));
-        // });
+        let seeing_units_ids = self
+            .seeing_units
+            .iter()
+            .map(|u| u.id)
+            .collect::<HashSet<_>>();
+        self.old_enemies.retain(|e| {
+            !seeing_units_ids.contains(&e.id)
+                && !game
+                    .units
+                    .iter()
+                    .filter(|u| u.player_id == game.my_id)
+                    .any(|u| {
+                        u.is_in_fov(e.position, &self.constants)
+                            && !game
+                                .units
+                                .iter()
+                                .filter(|u| u.player_id == game.my_id)
+                                .all(|u| {
+                                    u.position.distance_to(&e.position)
+                                        > self.constants.view_distance * 1.1
+                                })
+                    })
+        });
+        self.old_enemies.iter_mut().for_each(|enemy| {
+            let closest_my_unit = game
+                .units
+                .iter()
+                .filter(|u| u.player_id == game.my_id)
+                .min_by(|a, b| {
+                    a.position
+                        .square_distance_to(&enemy.position)
+                        .partial_cmp(&b.position.square_distance_to(&enemy.position))
+                        .unwrap()
+                });
+            if let Some(closest_my_unit) = closest_my_unit {
+                enemy.direction = (closest_my_unit.position - enemy.position).normalize();
+            }
+            enemy.weapon = Some(BOW);
+            enemy.ammo[BOW as usize] = 25;
+            if let Some(remaining_spawn_time) = enemy.remaining_spawn_time {
+                enemy.remaining_spawn_time = if remaining_spawn_time >= 0.0 {
+                    Some(remaining_spawn_time - 1.0 / self.constants.ticks_per_second)
+                } else {
+                    None
+                };
+            }
+        });
         self.seeing_projectiles = game.projectiles.clone();
         self.zone = game.zone.clone();
         self.old_projectiles
@@ -216,13 +248,13 @@ impl PotentialField {
                         .seeing_units
                         .iter()
                         .filter(|u| u.id != unit_id)
-                        .any(|u| u.position.distance_to(p) < self.constants.unit_radius * 2.0)
+                        .any(|u| u.position.distance_to(p) <= self.constants.unit_radius * 2.0)
                         .not()
             })
             .collect()
     }
 
-    fn value_projectiles(&self, position: &Vec2) -> f64 {
+    fn value_projectiles(&self, position: Vec2) -> f64 {
         let mut value = 0.0;
         for projectile in self.dangerous_projectiles.iter() {
             let line = projectile.as_line();
@@ -235,7 +267,7 @@ impl PotentialField {
             }
 
             value -= 1.0 - distance / distance_limit;
-            let distance = projectile.position.distance_to(position);
+            let distance = projectile.position.distance_to(&position);
             let range = projectile.range();
 
             value += 0.05 * distance / range;
@@ -243,8 +275,8 @@ impl PotentialField {
         value
     }
 
-    fn value_zone(&self, position: &Vec2) -> f64 {
-        let distance = self.zone.next_center.distance_to(position);
+    fn value_zone(&self, position: Vec2) -> f64 {
+        let distance = self.zone.next_center.distance_to(&position);
         let wanna_radius = (self.zone.next_radius - self.constants.unit_radius * 4.0)
             .max(self.constants.unit_radius * 2.0);
         if distance < wanna_radius {
@@ -254,16 +286,17 @@ impl PotentialField {
         1.0 - distance / wanna_radius
     }
 
-    fn value_outside(&self, position: &Vec2) -> f64 {
-        let distance = self.zone.current_center.distance_to(position);
-        if self.zone.current_radius - distance < self.constants.unit_radius * 2.0 {
-            return -10.0 * (distance / self.zone.current_radius);
+    fn value_outside(&self, position: Vec2) -> f64 {
+        let distance = self.zone.current_center.distance_to(&position);
+        let max_distance = self.zone.current_radius - self.constants.unit_radius * 4.0;
+        if distance > max_distance {
+            return -(distance - max_distance);
         }
 
         0.0
     }
 
-    fn value_shooting_sounds(&self, position: &Vec2) -> f64 {
+    fn value_shooting_sounds(&self, position: Vec2) -> f64 {
         let mut value = 0.0;
         for (sound, my_pos, tick) in self.shooting_sounds.iter() {
             let tick_k = 1.0 - (self.current_tick - tick) as f64 / 50.0;
@@ -280,11 +313,11 @@ impl PotentialField {
         value
     }
 
-    fn value_hit_sounds(&self, position: &Vec2) -> f64 {
+    fn value_hit_sounds(&self, position: Vec2) -> f64 {
         let mut value = 0.0;
         for (sound, tick) in self.hit_sounds.iter() {
             let tick_k = 1.0 - (self.current_tick - tick) as f64 / 50.0;
-            let distance = sound.position.distance_to(position);
+            let distance = sound.position.distance_to(&position);
             let distance_limit = self.constants.unit_radius * 5.0;
             if distance > distance_limit {
                 continue;
@@ -295,11 +328,11 @@ impl PotentialField {
         value
     }
 
-    fn value_steps_sounds(&self, position: &Vec2) -> f64 {
+    fn value_steps_sounds(&self, position: Vec2) -> f64 {
         let mut value = 0.0;
         for (sound, tick) in self.steps_sounds.iter() {
             let tick_k = 1.0 - (self.current_tick - tick) as f64 / 50.0;
-            let distance = sound.position.distance_to(position);
+            let distance = sound.position.distance_to(&position);
             let distance_limit = self.constants.unit_radius * 5.0;
             if distance > distance_limit {
                 continue;
@@ -310,73 +343,85 @@ impl PotentialField {
         value
     }
 
-    fn value_enemies(&self, position: &Vec2, me: &Unit, fight_mode: FightMode) -> f64 {
+    fn enemy_val(&self, position: Vec2, me: &Unit, fight_mode: FightMode, enemy: &Unit) -> f64 {
         let mut value = 0.0;
         let my_range = me.range(&self.constants);
+        let distance_to_enemy = enemy.position.distance_to(&position);
+        let enemy_range = enemy.range(&self.constants);
+        match fight_mode {
+            FightMode::Attack => {
+                // отходим на границу моего ренджа, подходим ближе если не можем стрелять, не ближе 20.0 примерно (уверенного попадания из лука и огнемета), нападаем если у него нет оружия
+                let target_distance = if let Some(my_range) = my_range {
+                    my_range * 0.75
+                } else {
+                    40.0
+                };
 
-        // TODO: запоминать врагов
+                if distance_to_enemy < target_distance {
+                    value -= 1.0 - distance_to_enemy / target_distance;
+                } else if distance_to_enemy < target_distance * 4.0 {
+                    value += (distance_to_enemy / target_distance - 1.0) * 0.5;
+                }
+            }
+            FightMode::Defend => {
+                // отходим за границу его ренджа, на наш не особо обращаем внимание, но нападаем если у него нет оружия
+                if let Some(enemy_range) = enemy_range {
+                    value -= 1.0 - distance_to_enemy / enemy_range;
+                } else {
+                    let target_distance = my_range.unwrap_or(40.0) * 0.75;
+                    if distance_to_enemy < target_distance {
+                        value -= 1.0 - distance_to_enemy / target_distance;
+                    } else if distance_to_enemy < target_distance * 2.0 {
+                        value += (distance_to_enemy / target_distance - 1.0) * 0.25;
+                    }
+                }
+            }
+            FightMode::RunWithNoWeapons => {
+                // убегаем за границу его ренджа
+                let range = enemy.range(&self.constants).unwrap_or(40.0);
+                if distance_to_enemy < range * 2.0 {
+                    value -= 1.0 - distance_to_enemy / range;
+                }
+            }
+        }
+
+        if let Some(enemy_range) = enemy_range {
+            let aim = Line::new(
+                enemy.position,
+                enemy.position + enemy.direction.normalize() * enemy_range,
+            );
+
+            let distance = aim.distance_to_point(&position);
+            let distance_limit = self.constants.unit_radius * 3.0;
+            if distance > distance_limit {
+                return value;
+            }
+
+            value -= (1.0 - distance / distance_limit) * 0.5;
+        }
+
+        value
+    }
+
+    fn value_enemies(&self, position: Vec2, me: &Unit, fight_mode: FightMode) -> f64 {
+        let mut value = 0.0;
+
         for enemy in self
             .seeing_units
             .iter()
             .filter(|u| u.player_id != self.my_id)
         {
-            let distance_to_enemy = enemy.position.distance_to(position);
-            let enemy_range = enemy.range(&self.constants);
-            match fight_mode {
-                FightMode::Attack => {
-                    // отходим на границу моего ренджа, подходим ближе если не можем стрелять, не ближе 20.0 примерно (уверенного попадания из лука и огнемета), нападаем если у него нет оружия
-                    let target_distance = if let Some(my_range) = my_range {
-                        my_range * 0.75
-                    } else {
-                        50.0
-                    };
+            value += self.enemy_val(position, me, fight_mode, enemy) * 0.3;
+        }
 
-                    if distance_to_enemy < target_distance {
-                        value -= 1.0 - distance_to_enemy / target_distance;
-                    } else if distance_to_enemy < target_distance * 4.0 {
-                        value += (distance_to_enemy / target_distance - 1.0) * 0.5;
-                    }
-                }
-                FightMode::Defend => {
-                    // отходим за границу его ренджа, на наш не особо обращаем внимание, но нападаем если у него нет оружия
-                    if let Some(enemy_range) = enemy_range {
-                        value -= 1.0 - distance_to_enemy / enemy_range;
-                    } else {
-                        let target_distance = my_range.unwrap_or(60.0) * 0.75;
-                        if distance_to_enemy < target_distance {
-                            value -= 1.0 - distance_to_enemy / target_distance;
-                        } else if distance_to_enemy < target_distance * 2.0 {
-                            value += (distance_to_enemy / target_distance - 1.0) * 0.25;
-                        }
-                    }
-                }
-                FightMode::RunWithNoWeapons => {
-                    // убегаем за границу его ренджа
-                    let range = enemy.range(&self.constants).unwrap_or(20.0);
-                    value -= 1.0 - distance_to_enemy / range;
-                }
-            }
-
-            if let Some(enemy_range) = enemy_range {
-                let aim = Line::new(
-                    enemy.position,
-                    enemy.position + enemy.direction.normalize() * enemy_range,
-                );
-
-                let distance = aim.distance_to_point(&position);
-                let distance_limit = self.constants.unit_radius * 3.0;
-                if distance > distance_limit {
-                    continue;
-                }
-
-                value -= (1.0 - distance / distance_limit) * 0.5;
-            }
+        for enemy in self.old_enemies.iter() {
+            value += self.enemy_val(position, me, fight_mode, enemy) * 0.2;
         }
 
         value
     }
 
-    pub fn value_allies(&self, position: &Vec2, me: &Unit) -> f64 {
+    pub fn value_allies(&self, position: Vec2, me: &Unit) -> f64 {
         let mut value = 0.0;
 
         for ally in self
@@ -384,7 +429,7 @@ impl PotentialField {
             .iter()
             .filter(|u| u.player_id == self.my_id && u.id != me.id)
         {
-            let distance_to_ally = ally.position.distance_to(position);
+            let distance_to_ally = ally.position.distance_to(&position);
             let min_distance = self.constants.unit_radius * 3.0;
             let max_distance = self.constants.unit_radius * 10.0;
             if distance_to_ally < min_distance {
@@ -451,25 +496,27 @@ impl PotentialField {
         sounds
     }
 
-    pub fn value(&self, position: &Vec2, me: &Unit, fight_mode: FightMode) -> f64 {
+    pub fn value(&self, position: Vec2, me: &Unit, fight_mode: FightMode) -> f64 {
         if self
             .dangerous_projectiles
             .iter()
             .any(|p| p.is_dangerous(me, &self.constants))
         {
-            return self.value_projectiles(position) + self.value_outside(position);
+            return self.value_projectiles(position) * 2.0
+                + self.value_outside(position)
+                + self.value_shooting_sounds(position)
+                + self.value_enemies(position, me, fight_mode);
         }
 
         self.value_zone(position)
             + self.value_outside(position)
-            + self.value_shooting_sounds(position)
             + self.value_hit_sounds(position)
             + self.value_steps_sounds(position)
             + self.value_enemies(position, me, fight_mode)
             + self.value_allies(position, me)
     }
 
-    pub fn value_unspawned(&self, position: &Vec2, me: &Unit) -> f64 {
+    pub fn value_unspawned(&self, position: Vec2, me: &Unit) -> f64 {
         self.value_zone(position) * 5.0
             + self.value_outside(position) * 5.0
             + self.value_shooting_sounds(position)
