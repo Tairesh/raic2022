@@ -104,12 +104,21 @@ impl MyStrategy {
                     let i_have_weapon =
                         me.weapon.is_some() && me.ammo[me.weapon.unwrap() as usize] > 0;
 
-                    let enemies_sum_hp = enemies.iter().map(|u| u.health + u.shield).sum::<f64>();
+                    let enemy_has_good_weapon = enemies.iter().any(|enemy| {
+                        if let Some(weapon) = enemy.weapon {
+                            (weapon == BOW || weapon == STAFF) && enemy.ammo[weapon as usize] > 0
+                        } else {
+                            false
+                        }
+                    });
+                    let me_has_good_weapon = if let Some(weapon) = me.weapon {
+                        (weapon == BOW || weapon == STAFF) && me.ammo[weapon as usize] > 0
+                    } else {
+                        false
+                    };
 
                     let fight_mode = if i_have_weapon {
-                        if enemies_sum_hp < (me.health + me.shield)
-                        // && me.next_shot_tick <= game.current_tick
-                        {
+                        if me_has_good_weapon || !enemy_has_good_weapon {
                             FightMode::Attack
                         } else {
                             FightMode::Defend
@@ -117,6 +126,30 @@ impl MyStrategy {
                     } else {
                         FightMode::RunWithNoWeapons
                     };
+
+                    // match fight_mode {
+                    //     FightMode::Attack => debug_interface.add_placed_text(
+                    //         me.position + Vec2::new(0.0, 1.0),
+                    //         "Attack".to_string(),
+                    //         Vec2::zero(),
+                    //         0.5,
+                    //         Color::BLACK,
+                    //     ),
+                    //     FightMode::Defend => debug_interface.add_placed_text(
+                    //         me.position + Vec2::new(0.0, 1.0),
+                    //         "Defend".to_string(),
+                    //         Vec2::zero(),
+                    //         0.5,
+                    //         Color::BLACK,
+                    //     ),
+                    //     FightMode::RunWithNoWeapons => debug_interface.add_placed_text(
+                    //         me.position + Vec2::new(0.0, 1.0),
+                    //         "Run".to_string(),
+                    //         Vec2::zero(),
+                    //         0.5,
+                    //         Color::BLACK,
+                    //     ),
+                    // }
 
                     // for point in self.pp.points_around(me.id).iter() {
                     //     let value = self.pp.value(*point, me, fight_mode);
@@ -138,7 +171,6 @@ impl MyStrategy {
                         })
                         .unwrap_or(0.0);
 
-                    // TODO: запоминать врагов
                     let closest_enemy = if i_have_weapon {
                         let can_shoot_right_now = enemies
                             .iter()
@@ -220,24 +252,12 @@ impl MyStrategy {
                     };
 
                     // TODO: get targets from other units
-                    let is_very_danger = self.pp.is_in_very_danger(me);
+                    let is_in_danger = self.pp.is_in_danger(me)
+                        || (closest_enemy.is_some()
+                            && closest_enemy.unwrap().position.distance_to(&me.position)
+                                < my_weapon_range);
 
-                    let target_velocity = if !i_have_weapon && !is_very_danger {
-                        let target_position = if let Some(weapon_idx) = me.weapon {
-                            game.loot.iter().find(|l| l.is_ammo_for(weapon_idx))
-                        } else {
-                            game.loot.iter().find(|l| l.is_weapon())
-                        };
-                        let target_position = target_position
-                            .map(|l| l.position)
-                            .unwrap_or_else(|| me.position + me.direction.normalize() * 100.0);
-
-                        (target_position - me.position).normalize()
-                            * self.constants.max_unit_forward_speed
-                    } else if me.remaining_spawn_time.is_some()
-                        && !self.pp.im_inside_obstacle(me)
-                        && !self.pp.im_outside(me)
-                    {
+                    let target_velocity = if me.remaining_spawn_time.is_some() {
                         (*self
                             .pp
                             .points_around(me.id)
@@ -251,23 +271,22 @@ impl MyStrategy {
                             - me.position)
                             .normalize()
                             * self.constants.spawn_movement_speed
-                    } else if self.pp.is_in_danger(me) {
-                        (*self
-                            .pp
-                            .points_around(me.id)
-                            .iter()
-                            .max_by(|&a, &b| {
-                                let a_value = self.pp.value(*a, me, fight_mode);
-                                let b_value = self.pp.value(*b, me, fight_mode);
-                                a_value.partial_cmp(&b_value).unwrap()
-                            })
-                            .unwrap_or(&game.zone.current_center)
-                            - me.position)
-                            .normalize()
+                    } else if is_in_danger {
+                        let best_pp =
+                            self.pp
+                                .points_around(me.id)
+                                .iter()
+                                .cloned()
+                                .max_by(|&a, &b| {
+                                    let a_value = self.pp.value(a, me, fight_mode);
+                                    let b_value = self.pp.value(b, me, fight_mode);
+                                    a_value.partial_cmp(&b_value).unwrap()
+                                });
+                        (best_pp.unwrap_or(game.zone.current_center) - me.position).normalize()
                             * self.constants.max_unit_forward_speed
                     } else {
-                        // TODO: запоминать бонусы
-                        let bonus = game
+                        let bonus = self
+                            .pp
                             .loot
                             .iter()
                             .filter(|l| {
@@ -303,8 +322,13 @@ impl MyStrategy {
                             if let Some(ally) = nearest_ally {
                                 ally.position
                             } else {
-                                let vec =
-                                    (me.position - game.zone.current_center).rotate(PI / 10.0);
+                                let vec = if me.position.distance_to(&game.zone.current_center)
+                                    < 0.5 * game.zone.current_radius
+                                {
+                                    (me.position - game.zone.current_center) * 1.5
+                                } else {
+                                    (me.position - game.zone.current_center).rotate(PI / 10.0)
+                                };
                                 game.zone.current_center + vec
                             }
                         };
@@ -405,13 +429,14 @@ impl MyStrategy {
                                         let seconds_to_unit = (d + self.constants.unit_radius)
                                             / weapon.projectile_speed;
 
-                                        seconds_to_unit > respawning_time
+                                        (seconds_to_unit + weapon.aim_time) > respawning_time
                                             && u.as_circle(self.constants.unit_radius)
                                                 .intercept_with_line(&aim)
                                     });
 
-                                if obstacles_on_line > 1 || d > weapon_range {
-                                    if let Some(loot) = game
+                                if obstacles_on_line > 1 || d > weapon_range || unit_on_line {
+                                    if let Some(loot) = self
+                                        .pp
                                         .loot
                                         .iter()
                                         .filter(|l| {
@@ -422,7 +447,9 @@ impl MyStrategy {
                                         .next()
                                     {
                                         Some(ActionOrder::Pickup { loot: loot.id })
-                                    } else if me.shield < self.constants.max_shield
+                                    } else if me.shield
+                                        <= (self.constants.max_shield
+                                            - self.constants.shield_per_potion)
                                         && me.shield_potions > 0
                                     {
                                         Some(ActionOrder::UseShieldPotion {})
@@ -438,11 +465,13 @@ impl MyStrategy {
                                         shoot: obstacles_on_line == 0
                                             && !unit_on_line
                                             && enemy_circle.intercept_with_line(&aim)
-                                            && d <= weapon_range + self.constants.unit_radius * 2.0
+                                            && d <= (weapon_range
+                                                + self.constants.unit_radius * 2.0)
                                             && remaining_spawn_time < seconds_to_unspawned_enemy,
                                     })
                                 }
-                            } else if let Some(loot) = game
+                            } else if let Some(loot) = self
+                                .pp
                                 .loot
                                 .iter()
                                 .filter(|l| {
@@ -453,7 +482,9 @@ impl MyStrategy {
                                 .next()
                             {
                                 Some(ActionOrder::Pickup { loot: loot.id })
-                            } else if me.shield < self.constants.max_shield && me.shield_potions > 0
+                            } else if me.shield
+                                <= (self.constants.max_shield - self.constants.shield_per_potion)
+                                && me.shield_potions > 0
                             {
                                 Some(ActionOrder::UseShieldPotion {})
                             } else {

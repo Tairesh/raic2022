@@ -26,6 +26,7 @@ pub struct PotentialField {
     pub shooting_sounds: Vec<(Sound, Vec2, i32)>,
     pub hit_sounds: Vec<(Sound, i32)>,
     pub steps_sounds: Vec<(Sound, i32)>,
+    pub loot: Vec<Loot>,
     current_tick: i32,
     my_id: i32,
 }
@@ -43,6 +44,7 @@ impl PotentialField {
             shooting_sounds: Vec::new(),
             hit_sounds: Vec::new(),
             steps_sounds: Vec::new(),
+            loot: Vec::new(),
             current_tick: 0,
             my_id: 0,
         }
@@ -221,6 +223,15 @@ impl PotentialField {
         );
         self.steps_sounds
             .retain(|&(.., tick)| game.current_tick - tick < 50);
+
+        self.loot.retain(|loot| {
+            !game
+                .units
+                .iter()
+                .filter(|p| p.player_id == game.my_id)
+                .any(|p| p.is_in_fov(loot.position, &self.constants))
+        });
+        self.loot.extend(game.loot.iter().cloned());
     }
 
     pub fn points_around(&self, unit_id: i32) -> Vec<Vec2> {
@@ -377,10 +388,10 @@ impl PotentialField {
                 }
             }
             FightMode::RunWithNoWeapons => {
-                // убегаем за границу его ренджа
-                let range = enemy.range(&self.constants).unwrap_or(40.0);
-                if distance_to_enemy < range * 2.0 {
-                    value -= 1.0 - distance_to_enemy / range;
+                // убегаем за границу видимости
+                let view_distance = self.constants.view_distance + self.constants.unit_radius * 2.0;
+                if distance_to_enemy < view_distance {
+                    value -= 1.0 - distance_to_enemy / view_distance;
                 }
             }
         }
@@ -411,11 +422,11 @@ impl PotentialField {
             .iter()
             .filter(|u| u.player_id != self.my_id)
         {
-            value += self.enemy_val(position, me, fight_mode, enemy) * 0.3;
+            value += self.enemy_val(position, me, fight_mode, enemy);
         }
 
         for enemy in self.old_enemies.iter() {
-            value += self.enemy_val(position, me, fight_mode, enemy) * 0.2;
+            value += self.enemy_val(position, me, fight_mode, enemy);
         }
 
         value
@@ -442,6 +453,24 @@ impl PotentialField {
         value
     }
 
+    pub fn value_loot(&self, position: Vec2, me: &Unit) -> f64 {
+        let mut value = 0.0;
+
+        for loot in self
+            .loot
+            .iter()
+            .filter(|l| l.is_useful_to_me(me, &self.constants))
+        {
+            let distance_to_loot = loot.position.distance_to(&position);
+            let max_distance = self.constants.unit_radius * 10.0;
+            if distance_to_loot < max_distance {
+                value += 1.0 - distance_to_loot / max_distance;
+            }
+        }
+
+        value
+    }
+
     pub fn im_inside_obstacle(&self, me: &Unit) -> bool {
         self.constants.obstacles.iter().any(|o| {
             o.as_circle(self.constants.unit_radius)
@@ -454,30 +483,21 @@ impl PotentialField {
             >= (self.zone.current_radius - self.constants.unit_radius * 4.0)
     }
 
-    pub fn is_in_very_danger(&self, me: &Unit) -> bool {
-        self.im_inside_obstacle(me)
-            || self.im_outside(me)
-            || !self.dangerous_projectiles.is_empty()
-            || !self.shooting_sounds.is_empty()
-            || !self
-                .hit_sounds
-                .iter()
-                .find(|(s, _)| {
-                    s.position.distance_to(&me.position) < self.constants.unit_radius * 2.0
-                })
-                .is_some()
-    }
-
     pub fn is_in_danger(&self, me: &Unit) -> bool {
         self.dangerous_projectiles
             .iter()
             .any(|p| p.is_dangerous(me, &self.constants))
             || self.shooting_sounds.iter().any(|(s, _, _)| {
+                if me.is_in_fov(s.position, &self.constants) {
+                    return false;
+                }
                 let range = s.get_weapon_shooting_range(&self.constants);
-                s.position.distance_to(&me.position) < range * 1.5
+                let offset = self.constants.sounds[s.type_index as usize].offset;
+                s.position.distance_to(&me.position) <= (range + offset)
             })
             || self.hit_sounds.iter().any(|(s, _)| {
-                s.position.distance_to(&me.position) < self.constants.unit_radius * 4.0
+                let offset = self.constants.sounds[s.type_index as usize].offset;
+                s.position.distance_to(&me.position) <= (self.constants.unit_radius + offset)
             })
             || me.position.distance_to(&self.zone.current_center)
                 >= (self.zone.current_radius - self.constants.unit_radius * 4.0)
@@ -502,18 +522,19 @@ impl PotentialField {
             .iter()
             .any(|p| p.is_dangerous(me, &self.constants))
         {
-            return self.value_projectiles(position) * 2.0
-                + self.value_outside(position)
+            return self.value_projectiles(position) * 3.0
+                + self.value_outside(position) * 5.0
                 + self.value_shooting_sounds(position)
                 + self.value_enemies(position, me, fight_mode);
         }
 
         self.value_zone(position)
-            + self.value_outside(position)
+            + self.value_outside(position) * 5.0
             + self.value_hit_sounds(position)
             + self.value_steps_sounds(position)
             + self.value_enemies(position, me, fight_mode)
             + self.value_allies(position, me)
+            + self.value_loot(position, me)
     }
 
     pub fn value_unspawned(&self, position: Vec2, me: &Unit) -> f64 {
@@ -523,5 +544,7 @@ impl PotentialField {
             + self.value_hit_sounds(position)
             + self.value_steps_sounds(position)
             + self.value_enemies(position, me, FightMode::RunWithNoWeapons)
+            + self.value_allies(position, me)
+            + self.value_loot(position, me)
     }
 }
